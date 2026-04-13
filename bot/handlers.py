@@ -1,3 +1,5 @@
+import logging
+
 import config
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -5,7 +7,9 @@ from telegram.ext import ContextTypes
 from ai.gemini import summarize_news
 from bot.formatter import format_weather_message
 from news.rss import fetch_all_sources
-from weather.cwa import fetch_district_weather
+from weather.cwa import WeatherLookupError, fetch_district_weather
+
+logger = logging.getLogger(__name__)
 
 
 async def weather_command(
@@ -25,7 +29,11 @@ async def weather_command(
     try:
         weather = await fetch_district_weather(district, config.CWA_API_KEY)
         message = format_weather_message(weather)
-    except Exception:
+    except WeatherLookupError as exc:
+        logger.warning('Weather lookup failed for %s: %s', district, exc)
+        message = f'⚠️ {exc}'
+    except Exception as exc:
+        logger.exception('Unexpected weather error for %s', district, exc_info=exc)
         message = f'⚠️ 無法取得 {district} 的天氣資訊，請稍後再試。'
 
     await update.message.reply_text(message, parse_mode='Markdown')

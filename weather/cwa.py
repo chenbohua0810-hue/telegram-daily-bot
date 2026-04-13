@@ -1,8 +1,14 @@
 from dataclasses import dataclass
+import logging
 
 import httpx
 
 CWA_BASE_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089'
+logger = logging.getLogger(__name__)
+
+
+class WeatherLookupError(Exception):
+    pass
 
 
 @dataclass
@@ -32,7 +38,15 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
         resp.raise_for_status()
         data = resp.json()
 
-    location = data['records']['locations'][0]['location'][0]
+    locations = data.get('records', {}).get('locations', [])
+    if not locations:
+        raise WeatherLookupError('中央氣象署天氣資料格式異常。')
+
+    district_locations = locations[0].get('location', [])
+    if not district_locations:
+        raise WeatherLookupError(f'查無 {district} 的天氣資料。')
+
+    location = district_locations[0]
     elements = location['weatherElement']
 
     return WeatherData(

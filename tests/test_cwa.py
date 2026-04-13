@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from weather.cwa import WeatherData, fetch_district_weather
+from weather.cwa import WeatherData, WeatherLookupError, fetch_district_weather
 
 
 @pytest.mark.asyncio
@@ -61,3 +61,25 @@ async def test_fetch_district_weather_raises_on_api_error():
         )
         with pytest.raises(Exception, match='API error'):
             await fetch_district_weather('大安區', 'test_key')
+
+
+@pytest.mark.asyncio
+async def test_fetch_district_weather_raises_on_missing_location():
+    mock_response = {
+        'records': {
+            'locations': [{
+                'location': [],
+            }],
+        }
+    }
+
+    with patch('weather.cwa.httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                raise_for_status=lambda: None,
+            )
+        )
+        with pytest.raises(WeatherLookupError, match='查無 文山區 的天氣資料'):
+            await fetch_district_weather('文山區', 'test_key')

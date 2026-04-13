@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.handlers import news_command, weather_command
+from weather.cwa import WeatherLookupError
 
 
 @pytest.mark.asyncio
@@ -33,6 +34,25 @@ async def test_weather_command_sends_message() -> None:
 
     update.message.reply_text.assert_called_once_with(
         '天氣訊息',
+        parse_mode='Markdown',
+    )
+
+
+@pytest.mark.asyncio
+async def test_weather_command_returns_lookup_error_message() -> None:
+    update = MagicMock()
+    update.message.reply_text = AsyncMock()
+    context = MagicMock()
+    context.args = ['文山區']
+
+    with patch(
+        'bot.handlers.fetch_district_weather',
+        AsyncMock(side_effect=WeatherLookupError('查無 文山區 的天氣資料。')),
+    ):
+        await weather_command(update, context)
+
+    update.message.reply_text.assert_called_once_with(
+        '⚠️ 查無 文山區 的天氣資料。',
         parse_mode='Markdown',
     )
 
