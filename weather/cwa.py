@@ -27,6 +27,10 @@ def _extract_element(elements: list, name: str) -> str:
     return 'N/A'
 
 
+def _truncate_text(value: str, limit: int = 500) -> str:
+    return value if len(value) <= limit else f'{value[:limit]}...'
+
+
 async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     params = {
         'Authorization': api_key,
@@ -40,6 +44,12 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
 
     locations = data.get('records', {}).get('locations', [])
     if not locations:
+        logger.error(
+            'Unexpected CWA response format for %s (status=%s): %s',
+            district,
+            resp.status_code,
+            _truncate_text(resp.text),
+        )
         raise WeatherLookupError('中央氣象署天氣資料格式異常。')
 
     district_locations = locations[0].get('location', [])

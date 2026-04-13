@@ -83,3 +83,30 @@ async def test_fetch_district_weather_raises_on_missing_location():
         )
         with pytest.raises(WeatherLookupError, match='查無 文山區 的天氣資料'):
             await fetch_district_weather('文山區', 'test_key')
+
+
+@pytest.mark.asyncio
+async def test_fetch_district_weather_logs_diagnostic_on_invalid_format():
+    mock_response = {'success': 'false', 'result': {'resource_id': 'F-D0047-089'}}
+
+    with (
+        patch('weather.cwa.httpx.AsyncClient') as mock_client,
+        patch('weather.cwa.logger') as mock_logger,
+    ):
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                text='{"success":"false"}',
+                raise_for_status=lambda: None,
+            )
+        )
+        with pytest.raises(WeatherLookupError, match='中央氣象署天氣資料格式異常'):
+            await fetch_district_weather('文山區', 'test_key')
+
+    mock_logger.error.assert_called_once()
+    error_call = mock_logger.error.call_args
+    assert error_call.args[0] == 'Unexpected CWA response format for %s (status=%s): %s'
+    assert error_call.args[1] == '文山區'
+    assert error_call.args[2] == 200
+    assert '{"success":"false"}' in error_call.args[3]
