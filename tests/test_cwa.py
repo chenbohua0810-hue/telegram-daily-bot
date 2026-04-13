@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from weather.cwa import WeatherData, WeatherLookupError, fetch_district_weather
+from weather.cwa import (
+    CWA_BASE_URL,
+    WeatherData,
+    WeatherLookupError,
+    fetch_district_weather,
+)
 
 
 @pytest.mark.asyncio
@@ -36,13 +41,15 @@ async def test_fetch_district_weather_returns_weather_data():
     }
 
     with patch('weather.cwa.httpx.AsyncClient') as mock_client:
-        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+        mock_get = AsyncMock(
             return_value=AsyncMock(
                 status_code=200,
                 json=lambda: mock_response,
+                text='{}',
                 raise_for_status=lambda: None,
             )
         )
+        mock_client.return_value.__aenter__.return_value.get = mock_get
         result = await fetch_district_weather('大安區', 'test_key')
 
     assert isinstance(result, WeatherData)
@@ -51,6 +58,14 @@ async def test_fetch_district_weather_returns_weather_data():
     assert result.max_temp == 28
     assert result.min_temp == 22
     assert result.rain_prob == 10
+    mock_get.assert_awaited_once_with(
+        CWA_BASE_URL,
+        params={
+            'Authorization': 'test_key',
+            'locationName': '大安區',
+            'elementName': 'Weather,MaxTemperature,MinTemperature,ProbabilityOfPrecipitation',
+        },
+    )
 
 
 @pytest.mark.asyncio
