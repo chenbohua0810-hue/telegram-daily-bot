@@ -10,14 +10,15 @@ TZ = pytz.timezone('Asia/Taipei')
 
 
 async def send_morning_weather(bot: Bot) -> None:
-    try:
-        weather = await fetch_district_weather(
-            config.WEATHER_DISTRICT,
-            config.CWA_API_KEY,
-        )
-        message = format_weather_message(weather)
-    except Exception:
-        message = '⚠️ 早報天氣資料暫時無法取得，請使用 /weather 手動查詢。'
+    parts = []
+    for district in config.WEATHER_DISTRICTS:
+        try:
+            weather = await fetch_district_weather(district, config.CWA_API_KEY)
+            parts.append(format_weather_message(weather))
+        except Exception:
+            parts.append(f'⚠️ 無法取得 {district} 的天氣資訊。')
+
+    message = '\n\n'.join(parts) if parts else '⚠️ 早報天氣資料暫時無法取得，請使用 /weather 手動查詢。'
 
     await bot.send_message(
         chat_id=config.TELEGRAM_GROUP_ID,

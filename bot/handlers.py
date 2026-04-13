@@ -5,7 +5,6 @@ from telegram.ext import ContextTypes
 from ai.gemini import summarize_news
 from bot.formatter import format_weather_message
 from news.rss import fetch_all_sources
-from news.throk import fetch_trending_threads
 from weather.cwa import fetch_district_weather
 
 
@@ -14,7 +13,7 @@ async def weather_command(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     args = context.args
-    district = args[0] if args else config.WEATHER_DISTRICT
+    district = args[0] if args else config.WEATHER_DISTRICTS[0]
 
     try:
         weather = await fetch_district_weather(district, config.CWA_API_KEY)
@@ -35,7 +34,6 @@ async def news_command(
     )
 
     news_items = fetch_all_sources(limit_per_source=3)
-    trending = await fetch_trending_threads(config.THROK_API_KEY, limit=3)
-    summary = summarize_news(news_items, trending, config.GEMINI_API_KEY)
+    summary = summarize_news(news_items, config.GEMINI_API_KEY)
 
     await update.message.reply_text(summary, parse_mode='Markdown')

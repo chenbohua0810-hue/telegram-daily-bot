@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock, patch
 
 from news.rss import NewsItem
-from news.throk import TrendingPost
 
 NEWS_ITEMS = [
     NewsItem(
@@ -18,14 +17,6 @@ NEWS_ITEMS = [
     ),
 ]
 
-TRENDING_POSTS = [
-    TrendingPost(
-        text='台灣科技產業話題',
-        engagement=2000,
-        url='https://threads.net/p/abc',
-    ),
-]
-
 
 def test_summarize_news_returns_string():
     from ai.gemini import summarize_news
@@ -36,7 +27,7 @@ def test_summarize_news_returns_string():
     )
 
     with patch('ai.gemini.genai.Client', return_value=mock_client):
-        result = summarize_news(NEWS_ITEMS, TRENDING_POSTS, 'test_key')
+        result = summarize_news(NEWS_ITEMS, 'test_key')
 
     assert isinstance(result, str)
     assert len(result) > 0
@@ -47,7 +38,7 @@ def test_summarize_news_returns_fallback_on_error():
     from ai.gemini import summarize_news
 
     with patch('ai.gemini.genai.Client', side_effect=Exception('API error')):
-        result = summarize_news(NEWS_ITEMS, TRENDING_POSTS, 'test_key')
+        result = summarize_news(NEWS_ITEMS, 'test_key')
 
     assert '台灣 GDP 成長' in result
     assert 'AI 新突破' in result

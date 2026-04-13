@@ -45,10 +45,6 @@ async def test_news_command_sends_message() -> None:
 
     with (
         patch('bot.handlers.fetch_all_sources', return_value=[]),
-        patch(
-            'bot.handlers.fetch_trending_threads',
-            AsyncMock(return_value=[]),
-        ),
         patch('bot.handlers.summarize_news', return_value='📰 今日新聞'),
     ):
         await news_command(update, context)

@@ -14,8 +14,11 @@ def _require(key: str) -> str:
 TELEGRAM_BOT_TOKEN = _require('TELEGRAM_BOT_TOKEN')
 TELEGRAM_GROUP_ID = int(_require('TELEGRAM_GROUP_ID'))
 CWA_API_KEY = _require('CWA_API_KEY')
-THROK_API_KEY = _require('THROK_API_KEY')
 GEMINI_API_KEY = _require('GEMINI_API_KEY')
-WEATHER_DISTRICT = os.getenv('WEATHER_DISTRICT', '大安區')
+WEATHER_DISTRICTS = [
+    d.strip()
+    for d in os.getenv('WEATHER_DISTRICTS', '文山區,小港區').split(',')
+    if d.strip()
+]
 MORNING_SEND_HOUR = int(os.getenv('MORNING_SEND_HOUR', '7'))
 MORNING_SEND_MINUTE = int(os.getenv('MORNING_SEND_MINUTE', '0'))

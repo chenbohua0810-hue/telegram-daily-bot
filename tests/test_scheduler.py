@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -17,7 +17,7 @@ async def test_send_morning_weather_sends_formatted_message() -> None:
         patch(
             'scheduler.jobs.fetch_district_weather',
             AsyncMock(return_value=weather),
-        ) as fetch_weather,
+        ),
         patch(
             'scheduler.jobs.format_weather_message',
             return_value='早安天氣',
@@ -25,13 +25,10 @@ async def test_send_morning_weather_sends_formatted_message() -> None:
     ):
         await send_morning_weather(bot)
 
-    fetch_weather.assert_awaited_once_with(
-        config.WEATHER_DISTRICT,
-        config.CWA_API_KEY,
-    )
+    expected_text = '\n\n'.join(['早安天氣'] * len(config.WEATHER_DISTRICTS))
     bot.send_message.assert_awaited_once_with(
         chat_id=config.TELEGRAM_GROUP_ID,
-        text='早安天氣',
+        text=expected_text,
         parse_mode='Markdown',
     )
 
@@ -49,11 +46,9 @@ async def test_send_morning_weather_falls_back_on_error() -> None:
     ):
         await send_morning_weather(bot)
 
-    bot.send_message.assert_awaited_once_with(
-        chat_id=config.TELEGRAM_GROUP_ID,
-        text='⚠️ 早報天氣資料暫時無法取得，請使用 /weather 手動查詢。',
-        parse_mode='Markdown',
-    )
+    sent_text = bot.send_message.call_args.kwargs['text']
+    for district in config.WEATHER_DISTRICTS:
+        assert district in sent_text
 
 
 def test_setup_scheduler_registers_morning_weather_job() -> None:
