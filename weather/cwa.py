@@ -72,6 +72,32 @@ def _extract_element(elements: list, name: str) -> str:
     return 'N/A'
 
 
+def _extract_temperature_series(elements: list) -> list[int]:
+    for element in elements:
+        element_name = _get_value(element, 'elementName', 'ElementName')
+        if element_name != 'Temperature':
+            continue
+
+        times = _get_value(element, 'time', 'Time') or []
+        temperatures = []
+        for time_entry in times:
+            element_values = _get_value(time_entry, 'elementValue', 'ElementValue') or []
+            if not element_values:
+                continue
+
+            value_entry = element_values[0]
+            value = _get_value(value_entry, 'Temperature', 'value')
+            if value is None:
+                continue
+
+            try:
+                temperatures.append(int(value))
+            except (ValueError, TypeError):
+                raise WeatherLookupError(f'溫度資料格式異常：{value}')
+        return temperatures
+    return []
+
+
 def _extract_weather(elements: list) -> str:
     for name in ('Weather', 'Wx'):
         value = _extract_element(elements, name)
@@ -94,6 +120,13 @@ def _extract_int_element(
             except (ValueError, TypeError):
                 raise WeatherLookupError(f'{label} 資料格式異常：{value}')
     raise WeatherLookupError(f'中央氣象署缺少 {label} 欄位。')
+
+
+def _extract_temperature_bound(elements: list, label: str, bound: str) -> int:
+    temperatures = _extract_temperature_series(elements)
+    if not temperatures:
+        raise WeatherLookupError(f'中央氣象署缺少 {label} 欄位。')
+    return max(temperatures) if bound == 'max' else min(temperatures)
 
 
 def _get_locations(data: dict) -> list:
@@ -180,8 +213,18 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     return WeatherData(
         district=district,
         description=_extract_weather(elements),
-        max_temp=_extract_int_element(elements, 'MaxTemperature', 'MaxT', '最高溫'),
-        min_temp=_extract_int_element(elements, 'MinTemperature', 'MinT', '最低溫'),
+        max_temp=(
+            _extract_element(elements, 'MaxTemperature') != 'N/A'
+            or _extract_element(elements, 'MaxT') != 'N/A'
+        )
+        and _extract_int_element(elements, 'MaxTemperature', 'MaxT', '最高溫')
+        or _extract_temperature_bound(elements, '最高溫', 'max'),
+        min_temp=(
+            _extract_element(elements, 'MinTemperature') != 'N/A'
+            or _extract_element(elements, 'MinT') != 'N/A'
+        )
+        and _extract_int_element(elements, 'MinTemperature', 'MinT', '最低溫')
+        or _extract_temperature_bound(elements, '最低溫', 'min'),
         rain_prob=_extract_int_element(
             elements, 'ProbabilityOfPrecipitation', 'PoP12h', '降雨機率'
         ),
