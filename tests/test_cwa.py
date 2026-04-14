@@ -69,7 +69,7 @@ async def test_fetch_district_weather_returns_weather_data():
 
 
 def test_cwa_base_url_uses_supported_district_forecast_dataset():
-    assert CWA_BASE_URL.endswith('F-D0047-089')
+    assert CWA_BASE_URL.endswith('F-D0047-093')
 
 
 @pytest.mark.asyncio
