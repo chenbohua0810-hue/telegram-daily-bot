@@ -166,7 +166,7 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
         'Authorization': api_key,
         'format': 'JSON',
         'locationName': district,
-        'elementName': 'Wx,MaxT,MinT,PoP12h',
+        'elementName': 'Wx,MaxT,MinT,PoP12h,Temperature',
     }
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(CWA_BASE_URL, params=params)

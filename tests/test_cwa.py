@@ -64,7 +64,7 @@ async def test_fetch_district_weather_returns_weather_data():
             'Authorization': 'test_key',
             'format': 'JSON',
             'locationName': '大安區',
-            'elementName': 'Wx,MaxT,MinT,PoP12h',
+            'elementName': 'Wx,MaxT,MinT,PoP12h,Temperature',
         },
     )
 
