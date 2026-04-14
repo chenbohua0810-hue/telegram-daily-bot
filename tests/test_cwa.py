@@ -63,9 +63,13 @@ async def test_fetch_district_weather_returns_weather_data():
         params={
             'Authorization': 'test_key',
             'locationName': '大安區',
-            'elementName': 'Weather,MaxTemperature,MinTemperature,ProbabilityOfPrecipitation',
+            'elementName': 'Wx,MaxT,MinT,PoP12h',
         },
     )
+
+
+def test_cwa_base_url_uses_supported_district_forecast_dataset():
+    assert CWA_BASE_URL.endswith('F-D0047-089')
 
 
 @pytest.mark.asyncio

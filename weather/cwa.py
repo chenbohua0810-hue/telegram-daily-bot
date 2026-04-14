@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import httpx
 
-CWA_BASE_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-093'
+CWA_BASE_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-089'
 logger = logging.getLogger(__name__)
 
 
@@ -109,7 +109,7 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     params = {
         'Authorization': api_key,
         'locationName': district,
-        'elementName': 'Weather,MaxTemperature,MinTemperature,ProbabilityOfPrecipitation',
+        'elementName': 'Wx,MaxT,MinT,PoP12h',
     }
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(CWA_BASE_URL, params=params)
