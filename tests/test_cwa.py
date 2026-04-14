@@ -134,6 +134,65 @@ async def test_fetch_district_weather_supports_official_cwa_field_names():
 
 
 @pytest.mark.asyncio
+async def test_fetch_district_weather_finds_district_across_location_groups():
+    mock_response = {
+        'records': {
+            'locations': [
+                {
+                    'datasetDescription': 'first group',
+                    'location': [{
+                        'locationName': '大安區',
+                        'weatherElement': [],
+                    }],
+                },
+                {
+                    'datasetDescription': 'second group',
+                    'location': [{
+                        'locationName': '文山區',
+                        'weatherElement': [
+                            {
+                                'elementName': 'Wx',
+                                'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '多雲'}]}],
+                            },
+                            {
+                                'elementName': 'MaxT',
+                                'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '27'}]}],
+                            },
+                            {
+                                'elementName': 'MinT',
+                                'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '21'}]}],
+                            },
+                            {
+                                'elementName': 'PoP12h',
+                                'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '20'}]}],
+                            },
+                        ],
+                    }],
+                },
+            ],
+        }
+    }
+
+    with patch('weather.cwa.httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                text='{}',
+                raise_for_status=lambda: None,
+            )
+        )
+        result = await fetch_district_weather('文山區', 'test_key')
+
+    assert isinstance(result, WeatherData)
+    assert result.district == '文山區'
+    assert result.description == '多雲'
+    assert result.max_temp == 27
+    assert result.min_temp == 21
+    assert result.rain_prob == 20
+
+
+@pytest.mark.asyncio
 async def test_fetch_district_weather_raises_on_api_error():
     with patch('weather.cwa.httpx.AsyncClient') as mock_client:
         mock_client.return_value.__aenter__.return_value.get = AsyncMock(

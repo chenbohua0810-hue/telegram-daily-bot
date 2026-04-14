@@ -98,11 +98,14 @@ def _get_locations(data: dict) -> list:
     if not locations_groups:
         return []
 
-    first_group = locations_groups[0]
-    locations = _get_value(first_group, 'location', 'Location') or []
-    if isinstance(locations, dict):
-        return [locations]
-    return locations
+    all_locations = []
+    for group in locations_groups:
+        locations = _get_value(group, 'location', 'Location') or []
+        if isinstance(locations, dict):
+            all_locations.append(locations)
+            continue
+        all_locations.extend(locations)
+    return all_locations
 
 
 async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
