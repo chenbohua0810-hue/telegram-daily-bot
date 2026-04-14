@@ -64,7 +64,7 @@ async def test_fetch_district_weather_returns_weather_data():
             'Authorization': 'test_key',
             'format': 'JSON',
             'locationName': '大安區',
-            'elementName': 'Wx,MaxT,MinT,PoP12h,PoP6h,T',
+            'elementName': '天氣現象,天氣預報綜合描述,3小時降雨機率,溫度',
         },
     )
 
@@ -196,6 +196,58 @@ async def test_fetch_district_weather_derives_min_max_from_temperature_series():
     assert result.max_temp == 26
     assert result.min_temp == 21
     assert result.rain_prob == 30
+
+
+@pytest.mark.asyncio
+async def test_fetch_district_weather_supports_chinese_element_names():
+    mock_response = {
+        'records': {
+            'locations': [{
+                'location': [{
+                    'locationName': '文山區',
+                    'weatherElement': [
+                        {
+                            'elementName': '天氣現象',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '多雲'}]}],
+                        },
+                        {
+                            'elementName': '溫度',
+                            'time': [
+                                {
+                                    'startTime': '2026-04-13 06:00:00',
+                                    'elementValue': [{'value': '21'}],
+                                },
+                                {
+                                    'startTime': '2026-04-13 12:00:00',
+                                    'elementValue': [{'value': '27'}],
+                                },
+                            ],
+                        },
+                        {
+                            'elementName': '3小時降雨機率',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '40'}]}],
+                        },
+                    ],
+                }],
+            }],
+        }
+    }
+
+    with patch('weather.cwa.httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                text='{}',
+                raise_for_status=lambda: None,
+            )
+        )
+        result = await fetch_district_weather('文山區', 'test_key')
+
+    assert result.description == '多雲'
+    assert result.max_temp == 27
+    assert result.min_temp == 21
+    assert result.rain_prob == 40
 
 
 @pytest.mark.asyncio

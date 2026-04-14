@@ -50,6 +50,7 @@ def _extract_element_payload_value(element: dict, element_name: str) -> str:
     field_candidates = {
         'Weather': ['Weather', 'value'],
         'Wx': ['value'],
+        '天氣現象': ['value'],
         'MaxTemperature': ['MaxTemperature', 'value'],
         'MaxT': ['value'],
         'MinTemperature': ['MinTemperature', 'value'],
@@ -58,6 +59,8 @@ def _extract_element_payload_value(element: dict, element_name: str) -> str:
         'PoP12h': ['value'],
         'PoP6h': ['value'],
         'T': ['Temperature', 'value'],
+        '溫度': ['Temperature', 'value'],
+        '3小時降雨機率': ['value'],
     }
     for field_name in field_candidates.get(element_name, ['value']):
         value = _get_value(value_entry, field_name)
@@ -77,7 +80,7 @@ def _extract_element(elements: list, name: str) -> str:
 def _extract_temperature_series(elements: list) -> list[int]:
     for element in elements:
         element_name = _get_value(element, 'elementName', 'ElementName')
-        if element_name not in ('Temperature', 'T'):
+        if element_name not in ('Temperature', 'T', '溫度'):
             continue
 
         times = _get_value(element, 'time', 'Time') or []
@@ -101,7 +104,7 @@ def _extract_temperature_series(elements: list) -> list[int]:
 
 
 def _extract_weather(elements: list) -> str:
-    for name in ('Weather', 'Wx'):
+    for name in ('Weather', 'Wx', '天氣現象'):
         value = _extract_element(elements, name)
         if value != 'N/A':
             return value
@@ -125,7 +128,7 @@ def _extract_int_element(
 
 
 def _extract_rain_probability(elements: list) -> int:
-    for name in ('ProbabilityOfPrecipitation', 'PoP12h', 'PoP6h'):
+    for name in ('ProbabilityOfPrecipitation', 'PoP12h', 'PoP6h', '3小時降雨機率'):
         value = _extract_element(elements, name)
         if value != 'N/A':
             try:
@@ -188,7 +191,7 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
         'Authorization': api_key,
         'format': 'JSON',
         'locationName': district,
-        'elementName': 'Wx,MaxT,MinT,PoP12h,PoP6h,T',
+        'elementName': '天氣現象,天氣預報綜合描述,3小時降雨機率,溫度',
     }
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(CWA_BASE_URL, params=params)
