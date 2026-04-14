@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import httpx
 
-CWA_BASE_URL = 'https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-D0047-093'
+CWA_BASE_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-061'
 logger = logging.getLogger(__name__)
 
 
