@@ -489,3 +489,51 @@ async def test_fetch_district_weather_logs_element_names_on_field_miss():
     assert warning_call.args[1] == '文山區'
     assert str(warning_call.args[2]) == '中央氣象署缺少 最高溫 欄位。'
     assert warning_call.args[3] == ['Wx']
+
+
+@pytest.mark.asyncio
+async def test_fetch_district_weather_allows_missing_rain_probability():
+    mock_response = {
+        'records': {
+            'locations': [{
+                'location': [{
+                    'locationName': '文山區',
+                    'weatherElement': [
+                        {
+                            'elementName': '天氣現象',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '多雲'}]}],
+                        },
+                        {
+                            'elementName': '溫度',
+                            'time': [
+                                {
+                                    'startTime': '2026-04-13 06:00:00',
+                                    'elementValue': [{'value': '21'}],
+                                },
+                                {
+                                    'startTime': '2026-04-13 12:00:00',
+                                    'elementValue': [{'value': '27'}],
+                                },
+                            ],
+                        },
+                    ],
+                }],
+            }],
+        }
+    }
+
+    with patch('weather.cwa.httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                text='{}',
+                raise_for_status=lambda: None,
+            )
+        )
+        result = await fetch_district_weather('文山區', 'test_key')
+
+    assert result.description == '多雲'
+    assert result.max_temp == 27
+    assert result.min_temp == 21
+    assert result.rain_prob is None

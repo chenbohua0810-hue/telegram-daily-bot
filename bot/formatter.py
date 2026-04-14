@@ -11,11 +11,12 @@ def _now_str() -> str:
 
 
 def format_weather_message(data: WeatherData) -> str:
-    rain_icon = '🌧️' if data.rain_prob >= 50 else '☀️'
+    rain_icon = '🌧️' if data.rain_prob is not None and data.rain_prob >= 50 else '☀️'
+    rain_text = f'{data.rain_prob}%' if data.rain_prob is not None else 'N/A'
     return (
         f'🌤️ *{data.district} 天氣早報*\n'
         f'🕐 {_now_str()}\n\n'
         f'天氣：{data.description}\n'
         f'🌡️ 溫度：{data.min_temp}°C — {data.max_temp}°C\n'
-        f'{rain_icon} 降雨機率：{data.rain_prob}%'
+        f'{rain_icon} 降雨機率：{rain_text}'
     )

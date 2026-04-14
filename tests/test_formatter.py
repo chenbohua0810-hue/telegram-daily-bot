@@ -30,3 +30,16 @@ def test_format_weather_message_is_string():
     result = format_weather_message(data)
     assert isinstance(result, str)
     assert len(result) > 0
+
+
+def test_format_weather_message_handles_missing_rain_probability():
+    data = WeatherData(
+        district='文山區',
+        description='多雲',
+        max_temp=27,
+        min_temp=21,
+        rain_prob=None,
+    )
+    result = format_weather_message(data)
+
+    assert '降雨機率：N/A' in result

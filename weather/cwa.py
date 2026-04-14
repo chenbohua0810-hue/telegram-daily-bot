@@ -17,7 +17,7 @@ class WeatherData:
     description: str
     max_temp: int
     min_temp: int
-    rain_prob: int
+    rain_prob: int | None
 
 
 def _get_value(data: dict, *keys: str):
@@ -127,7 +127,7 @@ def _extract_int_element(
     raise WeatherLookupError(f'中央氣象署缺少 {label} 欄位。')
 
 
-def _extract_rain_probability(elements: list) -> int:
+def _extract_rain_probability(elements: list) -> int | None:
     for name in ('ProbabilityOfPrecipitation', 'PoP12h', 'PoP6h', '3小時降雨機率'):
         value = _extract_element(elements, name)
         if value != 'N/A':
@@ -135,7 +135,7 @@ def _extract_rain_probability(elements: list) -> int:
                 return int(value)
             except (ValueError, TypeError):
                 raise WeatherLookupError(f'降雨機率 資料格式異常：{value}')
-    raise WeatherLookupError('中央氣象署缺少 降雨機率 欄位。')
+    return None
 
 
 def _extract_temperature_bound(elements: list, label: str, bound: str) -> int:
