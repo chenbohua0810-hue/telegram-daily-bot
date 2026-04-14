@@ -26,7 +26,10 @@ def _parse_weather_districts() -> list[str]:
     legacy_district = _optional('WEATHER_DISTRICT')
     raw_value = districts_value if districts_value is not None else legacy_district
     source_value = raw_value or '文山區,小港區'
-    return [district.strip() for district in source_value.split(',') if district.strip()]
+    districts = [district.strip() for district in source_value.split(',') if district.strip()]
+    if not districts:
+        raise ValueError('WEATHER_DISTRICTS must contain at least one district name')
+    return districts
 
 
 TELEGRAM_BOT_TOKEN = _require('TELEGRAM_BOT_TOKEN')

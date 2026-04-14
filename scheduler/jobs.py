@@ -1,13 +1,14 @@
+import logging
+from zoneinfo import ZoneInfo
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot
-import pytz
-import logging
 
 import config
 from bot.formatter import format_weather_message
 from weather.cwa import fetch_district_weather
 
-TZ = pytz.timezone('Asia/Taipei')
+TZ = ZoneInfo('Asia/Taipei')
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +25,7 @@ async def send_morning_weather(bot: Bot) -> None:
             weather = await fetch_district_weather(district, config.CWA_API_KEY)
             parts.append(format_weather_message(weather))
         except Exception:
+            logger.exception('Failed to fetch weather for %s', district)
             parts.append(f'⚠️ 無法取得 {district} 的天氣資訊。')
 
     message = '\n\n'.join(parts) if parts else '⚠️ 早報天氣資料暫時無法取得，請使用 /weather 手動查詢。'

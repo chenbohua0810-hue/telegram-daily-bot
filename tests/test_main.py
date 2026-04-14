@@ -8,6 +8,7 @@ def test_main_builds_application_and_registers_handlers() -> None:
     application = MagicMock()
     builder.token.return_value = builder
     builder.post_init.return_value = builder
+    builder.post_shutdown.return_value = builder
     builder.build.return_value = application
 
     with (

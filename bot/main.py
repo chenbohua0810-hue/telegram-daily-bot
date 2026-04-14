@@ -21,6 +21,7 @@ async def post_init(application: Application) -> None:
         logger.warning('Scheduler not started because required weather settings are missing.')
         return
 
+    application.bot_data['scheduler'] = scheduler
     scheduler.start()
     logger.info(
         'Scheduler started. Morning weather at %02d:%02d Asia/Taipei',
@@ -29,11 +30,19 @@ async def post_init(application: Application) -> None:
     )
 
 
+async def post_shutdown(application: Application) -> None:
+    scheduler = application.bot_data.get('scheduler')
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+        logger.info('Scheduler shut down.')
+
+
 def main() -> None:
     app = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
         .post_init(post_init)
+        .post_shutdown(post_shutdown)
         .build()
     )
 

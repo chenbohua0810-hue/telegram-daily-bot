@@ -1,10 +1,9 @@
 from datetime import datetime
-
-import pytz
+from zoneinfo import ZoneInfo
 
 from weather.cwa import WeatherData
 
-TZ = pytz.timezone('Asia/Taipei')
+TZ = ZoneInfo('Asia/Taipei')
 
 
 def _now_str() -> str:

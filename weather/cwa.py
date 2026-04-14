@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 
 import httpx
 
@@ -11,7 +11,7 @@ class WeatherLookupError(Exception):
     pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class WeatherData:
     district: str
     description: str
@@ -20,23 +20,15 @@ class WeatherData:
     rain_prob: int
 
 
-def _extract_element(elements: list, name: str) -> str:
-    for el in elements:
-        element_name = _get_value(el, 'elementName', 'ElementName')
-        if element_name == name:
-            return _extract_element_payload_value(el, name)
-    return 'N/A'
-
-
-def _truncate_text(value: str, limit: int = 500) -> str:
-    return value if len(value) <= limit else f'{value[:limit]}...'
-
-
 def _get_value(data: dict, *keys: str):
     for key in keys:
         if key in data:
             return data[key]
     return None
+
+
+def _truncate_text(value: str, limit: int = 500) -> str:
+    return value if len(value) <= limit else f'{value[:limit]}...'
 
 
 def _extract_element_payload_value(element: dict, element_name: str) -> str:
@@ -66,6 +58,14 @@ def _extract_element_payload_value(element: dict, element_name: str) -> str:
     return 'N/A'
 
 
+def _extract_element(elements: list, name: str) -> str:
+    for el in elements:
+        element_name = _get_value(el, 'elementName', 'ElementName')
+        if element_name == name:
+            return _extract_element_payload_value(el, name)
+    return 'N/A'
+
+
 def _extract_weather(elements: list) -> str:
     for name in ('Weather', 'Wx'):
         value = _extract_element(elements, name)
@@ -74,12 +74,20 @@ def _extract_weather(elements: list) -> str:
     return 'N/A'
 
 
-def _extract_temperature(elements: list, official_name: str, legacy_name: str) -> int:
+def _extract_int_element(
+    elements: list,
+    official_name: str,
+    legacy_name: str,
+    label: str,
+) -> int:
     for name in (official_name, legacy_name):
         value = _extract_element(elements, name)
         if value != 'N/A':
-            return int(value)
-    raise WeatherLookupError(f'中央氣象署缺少 {official_name} 欄位。')
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                raise WeatherLookupError(f'{label} 資料格式異常：{value}')
+    raise WeatherLookupError(f'中央氣象署缺少 {label} 欄位。')
 
 
 def _get_locations(data: dict) -> list:
@@ -109,16 +117,16 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
         data = resp.json()
 
     records = _get_value(data, 'records', 'Records')
-    response_text = str(getattr(resp, 'text', ''))
-    locations = _get_locations(data)
     if records is None:
         logger.error(
             'Unexpected CWA response format for %s (status=%s): %s',
             district,
             resp.status_code,
-            _truncate_text(response_text),
+            _truncate_text(resp.text),
         )
         raise WeatherLookupError('中央氣象署天氣資料格式異常。')
+
+    locations = _get_locations(data)
     if not locations:
         raise WeatherLookupError(f'查無 {district} 的天氣資料。')
 
@@ -137,11 +145,9 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     return WeatherData(
         district=district,
         description=_extract_weather(elements),
-        max_temp=_extract_temperature(elements, 'MaxTemperature', 'MaxT'),
-        min_temp=_extract_temperature(elements, 'MinTemperature', 'MinT'),
-        rain_prob=_extract_temperature(
-            elements,
-            'ProbabilityOfPrecipitation',
-            'PoP12h',
+        max_temp=_extract_int_element(elements, 'MaxTemperature', 'MaxT', '最高溫'),
+        min_temp=_extract_int_element(elements, 'MinTemperature', 'MinT', '最低溫'),
+        rain_prob=_extract_int_element(
+            elements, 'ProbabilityOfPrecipitation', 'PoP12h', '降雨機率'
         ),
     )

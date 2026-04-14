@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from news.rss import NewsItem
 
 NEWS_ITEMS = [
@@ -26,7 +28,7 @@ def test_summarize_news_returns_string():
         text='📰 今日新聞摘要\n1. 台灣 GDP 成長...'
     )
 
-    with patch('ai.gemini.genai.Client', return_value=mock_client):
+    with patch('ai.gemini._get_client', return_value=mock_client):
         result = summarize_news(NEWS_ITEMS, 'test_key')
 
     assert isinstance(result, str)
@@ -37,7 +39,10 @@ def test_summarize_news_returns_string():
 def test_summarize_news_returns_fallback_on_error():
     from ai.gemini import summarize_news
 
-    with patch('ai.gemini.genai.Client', side_effect=Exception('API error')):
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = Exception('API error')
+
+    with patch('ai.gemini._get_client', return_value=mock_client):
         result = summarize_news(NEWS_ITEMS, 'test_key')
 
     assert '台灣 GDP 成長' in result

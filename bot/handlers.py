@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import config
@@ -16,6 +17,9 @@ async def weather_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
+    if update.message is None:
+        return
+
     args = context.args
     district = args[0] if args else config.WEATHER_DISTRICTS[0]
 
@@ -33,7 +37,7 @@ async def weather_command(
         logger.warning('Weather lookup failed for %s: %s', district, exc)
         message = f'⚠️ {exc}'
     except Exception as exc:
-        logger.exception('Unexpected weather error for %s', district, exc_info=exc)
+        logger.exception('Unexpected weather error for %s', district)
         message = f'⚠️ 無法取得 {district} 的天氣資訊，請稍後再試。'
 
     await update.message.reply_text(message, parse_mode='Markdown')
@@ -43,6 +47,9 @@ async def news_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
+    if update.message is None:
+        return
+
     if config.GEMINI_API_KEY is None:
         await update.message.reply_text(
             '⚠️ 尚未設定 GEMINI_API_KEY，無法整理新聞摘要。',
@@ -55,7 +62,7 @@ async def news_command(
         parse_mode='Markdown',
     )
 
-    news_items = fetch_all_sources(limit_per_source=3)
-    summary = summarize_news(news_items, config.GEMINI_API_KEY)
+    news_items = await fetch_all_sources(limit_per_source=3)
+    summary = await asyncio.to_thread(summarize_news, news_items, config.GEMINI_API_KEY)
 
     await update.message.reply_text(summary, parse_mode='Markdown')
