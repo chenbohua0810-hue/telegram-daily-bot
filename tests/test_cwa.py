@@ -64,7 +64,6 @@ async def test_fetch_district_weather_returns_weather_data():
             'Authorization': 'test_key',
             'format': 'JSON',
             'locationName': '大安區',
-            'elementName': '天氣現象,天氣預報綜合描述,3小時降雨機率,溫度',
         },
     )
 
