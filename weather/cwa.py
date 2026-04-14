@@ -31,6 +31,12 @@ def _truncate_text(value: str, limit: int = 500) -> str:
     return value if len(value) <= limit else f'{value[:limit]}...'
 
 
+def _normalize_location_name(value: str | None) -> str:
+    if value is None:
+        return ''
+    return value.strip().replace('台', '臺')
+
+
 def _extract_element_payload_value(element: dict, element_name: str) -> str:
     times = _get_value(element, 'time', 'Time') or []
     if not times:
@@ -108,6 +114,20 @@ def _get_locations(data: dict) -> list:
     return all_locations
 
 
+def _get_location_group_names(data: dict) -> list[str]:
+    records = _get_value(data, 'records', 'Records') or {}
+    locations_groups = _get_value(records, 'locations', 'Locations') or []
+    if isinstance(locations_groups, dict):
+        locations_groups = [locations_groups]
+
+    group_names = []
+    for group in locations_groups:
+        group_name = _get_value(group, 'locationsName', 'LocationsName')
+        if group_name:
+            group_names.append(group_name)
+    return group_names
+
+
 async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     params = {
         'Authorization': api_key,
@@ -133,14 +153,25 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     if not locations:
         raise WeatherLookupError(f'查無 {district} 的天氣資料。')
 
+    normalized_district = _normalize_location_name(district)
     location = next(
         (
             item for item in locations
-            if _get_value(item, 'locationName', 'LocationName') == district
+            if _normalize_location_name(_get_value(item, 'locationName', 'LocationName'))
+            == normalized_district
         ),
         None,
     )
     if location is None:
+        available_locations = [
+            _get_value(item, 'locationName', 'LocationName') for item in locations
+        ]
+        logger.warning(
+            'CWA location lookup miss for %s. Available groups=%s locations=%s',
+            district,
+            _get_location_group_names(data),
+            available_locations,
+        )
         raise WeatherLookupError(f'查無 {district} 的天氣資料。')
 
     elements = _get_value(location, 'weatherElement', 'WeatherElement') or []

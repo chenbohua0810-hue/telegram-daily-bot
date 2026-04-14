@@ -193,6 +193,88 @@ async def test_fetch_district_weather_finds_district_across_location_groups():
 
 
 @pytest.mark.asyncio
+async def test_fetch_district_weather_matches_normalized_location_name():
+    mock_response = {
+        'records': {
+            'locations': [{
+                'location': [{
+                    'locationName': '文山區 ',
+                    'weatherElement': [
+                        {
+                            'elementName': 'Wx',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '多雲'}]}],
+                        },
+                        {
+                            'elementName': 'MaxT',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '27'}]}],
+                        },
+                        {
+                            'elementName': 'MinT',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '21'}]}],
+                        },
+                        {
+                            'elementName': 'PoP12h',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '20'}]}],
+                        },
+                    ],
+                }],
+            }],
+        }
+    }
+
+    with patch('weather.cwa.httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                text='{}',
+                raise_for_status=lambda: None,
+            )
+        )
+        result = await fetch_district_weather('文山區', 'test_key')
+
+    assert result.district == '文山區'
+    assert result.description == '多雲'
+
+
+@pytest.mark.asyncio
+async def test_fetch_district_weather_logs_available_locations_on_lookup_miss():
+    mock_response = {
+        'records': {
+            'locations': [{
+                'locationsName': '臺北市',
+                'location': [{
+                    'locationName': '大安區',
+                    'weatherElement': [],
+                }],
+            }],
+        }
+    }
+
+    with (
+        patch('weather.cwa.httpx.AsyncClient') as mock_client,
+        patch('weather.cwa.logger') as mock_logger,
+    ):
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                text='{}',
+                raise_for_status=lambda: None,
+            )
+        )
+        with pytest.raises(WeatherLookupError, match='查無 文山區 的天氣資料'):
+            await fetch_district_weather('文山區', 'test_key')
+
+    mock_logger.warning.assert_called_once()
+    warning_call = mock_logger.warning.call_args
+    assert warning_call.args[0] == 'CWA location lookup miss for %s. Available groups=%s locations=%s'
+    assert warning_call.args[1] == '文山區'
+    assert warning_call.args[2] == ['臺北市']
+    assert warning_call.args[3] == ['大安區']
+
+
+@pytest.mark.asyncio
 async def test_fetch_district_weather_raises_on_api_error():
     with patch('weather.cwa.httpx.AsyncClient') as mock_client:
         mock_client.return_value.__aenter__.return_value.get = AsyncMock(
