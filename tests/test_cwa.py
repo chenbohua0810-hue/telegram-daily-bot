@@ -62,6 +62,7 @@ async def test_fetch_district_weather_returns_weather_data():
         CWA_BASE_URL,
         params={
             'Authorization': 'test_key',
+            'format': 'JSON',
             'locationName': '大安區',
             'elementName': 'Wx,MaxT,MinT,PoP12h',
         },
@@ -69,7 +70,7 @@ async def test_fetch_district_weather_returns_weather_data():
 
 
 def test_cwa_base_url_uses_supported_district_forecast_dataset():
-    assert CWA_BASE_URL.endswith('F-D0047-093')
+    assert CWA_BASE_URL == 'https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-D0047-093'
 
 
 @pytest.mark.asyncio

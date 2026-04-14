@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import httpx
 
-CWA_BASE_URL = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-093'
+CWA_BASE_URL = 'https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-D0047-093'
 logger = logging.getLogger(__name__)
 
 
@@ -131,6 +131,7 @@ def _get_location_group_names(data: dict) -> list[str]:
 async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     params = {
         'Authorization': api_key,
+        'format': 'JSON',
         'locationName': district,
         'elementName': 'Wx,MaxT,MinT,PoP12h',
     }
