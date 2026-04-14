@@ -64,7 +64,7 @@ async def test_fetch_district_weather_returns_weather_data():
             'Authorization': 'test_key',
             'format': 'JSON',
             'locationName': '大安區',
-            'elementName': 'Wx,MaxT,MinT,PoP12h,Temperature',
+            'elementName': 'Wx,MaxT,MinT,PoP12h,PoP6h,T',
         },
     )
 
@@ -150,27 +150,27 @@ async def test_fetch_district_weather_derives_min_max_from_temperature_series():
                             }],
                         },
                         {
-                            'ElementName': 'Temperature',
+                            'ElementName': 'T',
                             'Time': [
                                 {
                                     'DataTime': '2026-04-13 06:00:00',
-                                    'ElementValue': [{'Temperature': '21'}],
+                                    'ElementValue': [{'value': '21'}],
                                 },
                                 {
                                     'DataTime': '2026-04-13 09:00:00',
-                                    'ElementValue': [{'Temperature': '26'}],
+                                    'ElementValue': [{'value': '26'}],
                                 },
                                 {
                                     'DataTime': '2026-04-13 12:00:00',
-                                    'ElementValue': [{'Temperature': '24'}],
+                                    'ElementValue': [{'value': '24'}],
                                 },
                             ],
                         },
                         {
-                            'ElementName': 'ProbabilityOfPrecipitation',
+                            'ElementName': 'PoP6h',
                             'Time': [{
                                 'DataTime': '2026-04-13 06:00:00',
-                                'ElementValue': [{'ProbabilityOfPrecipitation': '30'}],
+                                'ElementValue': [{'value': '30'}],
                             }],
                         },
                     ],

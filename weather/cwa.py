@@ -56,6 +56,8 @@ def _extract_element_payload_value(element: dict, element_name: str) -> str:
         'MinT': ['value'],
         'ProbabilityOfPrecipitation': ['ProbabilityOfPrecipitation', 'value'],
         'PoP12h': ['value'],
+        'PoP6h': ['value'],
+        'T': ['Temperature', 'value'],
     }
     for field_name in field_candidates.get(element_name, ['value']):
         value = _get_value(value_entry, field_name)
@@ -75,7 +77,7 @@ def _extract_element(elements: list, name: str) -> str:
 def _extract_temperature_series(elements: list) -> list[int]:
     for element in elements:
         element_name = _get_value(element, 'elementName', 'ElementName')
-        if element_name != 'Temperature':
+        if element_name not in ('Temperature', 'T'):
             continue
 
         times = _get_value(element, 'time', 'Time') or []
@@ -122,6 +124,17 @@ def _extract_int_element(
     raise WeatherLookupError(f'中央氣象署缺少 {label} 欄位。')
 
 
+def _extract_rain_probability(elements: list) -> int:
+    for name in ('ProbabilityOfPrecipitation', 'PoP12h', 'PoP6h'):
+        value = _extract_element(elements, name)
+        if value != 'N/A':
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                raise WeatherLookupError(f'降雨機率 資料格式異常：{value}')
+    raise WeatherLookupError('中央氣象署缺少 降雨機率 欄位。')
+
+
 def _extract_temperature_bound(elements: list, label: str, bound: str) -> int:
     temperatures = _extract_temperature_series(elements)
     if not temperatures:
@@ -166,7 +179,7 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
         'Authorization': api_key,
         'format': 'JSON',
         'locationName': district,
-        'elementName': 'Wx,MaxT,MinT,PoP12h,Temperature',
+        'elementName': 'Wx,MaxT,MinT,PoP12h,PoP6h,T',
     }
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(CWA_BASE_URL, params=params)
@@ -225,7 +238,5 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
         )
         and _extract_int_element(elements, 'MinTemperature', 'MinT', '最低溫')
         or _extract_temperature_bound(elements, '最低溫', 'min'),
-        rain_prob=_extract_int_element(
-            elements, 'ProbabilityOfPrecipitation', 'PoP12h', '降雨機率'
-        ),
+        rain_prob=_extract_rain_probability(elements),
     )
