@@ -174,6 +174,15 @@ def _get_location_group_names(data: dict) -> list[str]:
     return group_names
 
 
+def _get_element_names(elements: list) -> list[str]:
+    element_names = []
+    for element in elements:
+        element_name = _get_value(element, 'elementName', 'ElementName')
+        if element_name is not None:
+            element_names.append(element_name)
+    return element_names
+
+
 async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
     params = {
         'Authorization': api_key,
@@ -223,20 +232,29 @@ async def fetch_district_weather(district: str, api_key: str) -> WeatherData:
 
     elements = _get_value(location, 'weatherElement', 'WeatherElement') or []
 
-    return WeatherData(
-        district=district,
-        description=_extract_weather(elements),
-        max_temp=(
-            _extract_element(elements, 'MaxTemperature') != 'N/A'
-            or _extract_element(elements, 'MaxT') != 'N/A'
+    try:
+        return WeatherData(
+            district=district,
+            description=_extract_weather(elements),
+            max_temp=(
+                _extract_element(elements, 'MaxTemperature') != 'N/A'
+                or _extract_element(elements, 'MaxT') != 'N/A'
+            )
+            and _extract_int_element(elements, 'MaxTemperature', 'MaxT', '最高溫')
+            or _extract_temperature_bound(elements, '最高溫', 'max'),
+            min_temp=(
+                _extract_element(elements, 'MinTemperature') != 'N/A'
+                or _extract_element(elements, 'MinT') != 'N/A'
+            )
+            and _extract_int_element(elements, 'MinTemperature', 'MinT', '最低溫')
+            or _extract_temperature_bound(elements, '最低溫', 'min'),
+            rain_prob=_extract_rain_probability(elements),
         )
-        and _extract_int_element(elements, 'MaxTemperature', 'MaxT', '最高溫')
-        or _extract_temperature_bound(elements, '最高溫', 'max'),
-        min_temp=(
-            _extract_element(elements, 'MinTemperature') != 'N/A'
-            or _extract_element(elements, 'MinT') != 'N/A'
+    except WeatherLookupError as exc:
+        logger.warning(
+            'CWA weather field miss for %s: %s. Available elements=%s',
+            district,
+            exc,
+            _get_element_names(elements),
         )
-        and _extract_int_element(elements, 'MinTemperature', 'MinT', '最低溫')
-        or _extract_temperature_bound(elements, '最低溫', 'min'),
-        rain_prob=_extract_rain_probability(elements),
-    )
+        raise

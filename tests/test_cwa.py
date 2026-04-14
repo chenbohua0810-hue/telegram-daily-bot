@@ -397,3 +397,44 @@ async def test_fetch_district_weather_logs_diagnostic_on_invalid_format():
     assert error_call.args[1] == '文山區'
     assert error_call.args[2] == 200
     assert '{"success":"false"}' in error_call.args[3]
+
+
+@pytest.mark.asyncio
+async def test_fetch_district_weather_logs_element_names_on_field_miss():
+    mock_response = {
+        'records': {
+            'locations': [{
+                'location': [{
+                    'locationName': '文山區',
+                    'weatherElement': [
+                        {
+                            'elementName': 'Wx',
+                            'time': [{'startTime': '2026-04-13 06:00:00', 'elementValue': [{'value': '多雲'}]}],
+                        },
+                    ],
+                }],
+            }],
+        }
+    }
+
+    with (
+        patch('weather.cwa.httpx.AsyncClient') as mock_client,
+        patch('weather.cwa.logger') as mock_logger,
+    ):
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: mock_response,
+                text='{}',
+                raise_for_status=lambda: None,
+            )
+        )
+        with pytest.raises(WeatherLookupError, match='中央氣象署缺少 最高溫 欄位'):
+            await fetch_district_weather('文山區', 'test_key')
+
+    mock_logger.warning.assert_called_once()
+    warning_call = mock_logger.warning.call_args
+    assert warning_call.args[0] == 'CWA weather field miss for %s: %s. Available elements=%s'
+    assert warning_call.args[1] == '文山區'
+    assert str(warning_call.args[2]) == '中央氣象署缺少 最高溫 欄位。'
+    assert warning_call.args[3] == ['Wx']
