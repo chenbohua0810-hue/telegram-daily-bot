@@ -234,3 +234,4 @@ async def test_eth_monitor_retry_on_5xx(tmp_path: pytest.TempPathFactory) -> Non
 
     assert len(events) == 3
     assert calls["count"] == 2
+
