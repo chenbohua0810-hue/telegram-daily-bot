@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from analysis.trade_logger import TradeLogger
+from analysis.performance_tracker import PerformanceTracker
 from execution.binance_executor import ExecutionResult
 from models.decision import TradeDecision
 from models.events import OnChainEvent
@@ -112,3 +113,62 @@ def test_log_skip_snapshot_has_skip_reason() -> None:
     assert snapshot.final_action == "skip"
     assert snapshot.skip_reason
     assert snapshot.trade_id is None
+
+
+def test_update_daily_pnl_first_call_sets_starting_equity() -> None:
+    repo = Mock()
+    repo.get_daily_pnl.return_value = None
+    tracker = PerformanceTracker(repo)
+
+    tracker.update_daily_pnl(Decimal("10000"))
+
+    kwargs = repo.set_daily_pnl.call_args.kwargs
+    assert kwargs["starting_equity_usdt"] == Decimal("10000")
+    assert kwargs["realized_pnl_usdt"] == Decimal("0")
+    assert kwargs["unrealized_pnl_usdt"] == Decimal("0")
+
+
+def test_daily_pnl_pct_computes_correctly() -> None:
+    repo = Mock()
+    repo.get_daily_pnl.return_value = {
+        "date": "2026-04-21",
+        "realized_pnl_usdt": 300.0,
+        "unrealized_pnl_usdt": -100.0,
+        "starting_equity_usdt": 10000.0,
+    }
+    tracker = PerformanceTracker(repo)
+
+    assert tracker.daily_pnl_pct("2026-04-21") == 0.02
+
+
+def test_wallet_performance_calculates_winrate() -> None:
+    repo = Mock()
+    repo.recent_trades.return_value = [
+        {"source_wallet": "0xabc123", "quantity_usdt": 100.0, "fee_usdt": 1.0, "action": "buy", "status": "filled", "realized_slippage_pct": 0.0, "price": 110.0, "pre_trade_mid_price": 100.0},
+        {"source_wallet": "0xabc123", "quantity_usdt": 100.0, "fee_usdt": 1.0, "action": "buy", "status": "filled", "realized_slippage_pct": 0.0, "price": 108.0, "pre_trade_mid_price": 100.0},
+        {"source_wallet": "0xabc123", "quantity_usdt": 100.0, "fee_usdt": 1.0, "action": "buy", "status": "filled", "realized_slippage_pct": 0.0, "price": 105.0, "pre_trade_mid_price": 100.0},
+        {"source_wallet": "0xabc123", "quantity_usdt": 100.0, "fee_usdt": 1.0, "action": "buy", "status": "filled", "realized_slippage_pct": 0.0, "price": 95.0, "pre_trade_mid_price": 100.0},
+        {"source_wallet": "0xabc123", "quantity_usdt": 100.0, "fee_usdt": 1.0, "action": "buy", "status": "filled", "realized_slippage_pct": 0.0, "price": 90.0, "pre_trade_mid_price": 100.0},
+    ]
+    tracker = PerformanceTracker(repo)
+
+    performance = tracker.wallet_performance("0xabc123")
+
+    assert performance["trades"] == 5
+    assert performance["win_rate"] == 0.6
+
+
+def test_wallet_performance_empty_returns_zero() -> None:
+    repo = Mock()
+    repo.recent_trades.return_value = []
+    tracker = PerformanceTracker(repo)
+
+    performance = tracker.wallet_performance("0xabc123")
+
+    assert performance == {
+        "trades": 0,
+        "win_rate": 0.0,
+        "avg_roi": 0.0,
+        "max_drawdown": 0.0,
+        "pnl_usdt": 0.0,
+    }
