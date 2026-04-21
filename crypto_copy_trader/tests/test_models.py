@@ -8,6 +8,7 @@ import pytest
 
 from models.decision import TradeDecision
 from models.events import OnChainEvent
+from models.portfolio import Portfolio, Position
 from models.signals import (
     SentimentSignal,
     TechnicalSignal,
@@ -148,3 +149,40 @@ def test_event_roundtrip_jsonl() -> None:
     restored = OnChainEvent.from_dict(serialized)
 
     assert restored == event
+
+
+def test_position_is_frozen() -> None:
+    position = Position(
+        symbol="BTC/USDT",
+        quantity=Decimal("0.5"),
+        avg_entry_price=Decimal("62000"),
+        entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        source_wallet="0xabc123",
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        position.symbol = "ETH/USDT"
+
+
+def test_portfolio_validate_rejects_non_dict_positions() -> None:
+    portfolio = Portfolio(
+        cash_usdt=Decimal("1000"),
+        positions=[],
+        total_value_usdt=Decimal("1000"),
+        daily_pnl_pct=0.0,
+    )
+
+    with pytest.raises(ValueError):
+        portfolio.validate()
+
+
+def test_portfolio_validate_rejects_total_value_below_cash() -> None:
+    portfolio = Portfolio(
+        cash_usdt=Decimal("1000"),
+        positions={},
+        total_value_usdt=Decimal("999"),
+        daily_pnl_pct=0.0,
+    )
+
+    with pytest.raises(ValueError):
+        portfolio.validate()
