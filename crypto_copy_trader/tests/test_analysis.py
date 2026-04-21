@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from analysis.trade_logger import TradeLogger
 from analysis.performance_tracker import PerformanceTracker
+from analysis.telegram_notifier import TelegramNotifier
 from execution.binance_executor import ExecutionResult
 from models.decision import TradeDecision
 from models.events import OnChainEvent
@@ -172,3 +175,51 @@ def test_wallet_performance_empty_returns_zero() -> None:
         "max_drawdown": 0.0,
         "pnl_usdt": 0.0,
     }
+
+
+@pytest.mark.asyncio
+async def test_notify_trade_fill_sends_message() -> None:
+    bot = Mock()
+    bot.send_message = AsyncMock()
+    notifier = TelegramNotifier("token", "chat", bot=bot)
+
+    await notifier.notify_trade_fill(build_decision("buy"), build_result())
+
+    bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_notify_skip_sends_short_message() -> None:
+    bot = Mock()
+    bot.send_message = AsyncMock()
+    notifier = TelegramNotifier("token", "chat", bot=bot)
+
+    await notifier.notify_trade_skip(build_event(), "below_min_trade_usd")
+
+    text = bot.send_message.await_args.kwargs["text"]
+    assert "below" in text
+    assert "ETH" in text
+
+
+@pytest.mark.asyncio
+async def test_telegram_api_error_swallowed(caplog: pytest.LogCaptureFixture) -> None:
+    bot = Mock()
+    bot.send_message = AsyncMock(side_effect=RuntimeError("boom"))
+    notifier = TelegramNotifier("token", "chat", bot=bot)
+
+    await notifier.notify_trade_skip(build_event(), "below_min_trade_usd")
+
+    assert "Telegram notification failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_markdown_escape_special_chars() -> None:
+    bot = Mock()
+    bot.send_message = AsyncMock()
+    notifier = TelegramNotifier("token", "chat", bot=bot)
+
+    await notifier.notify_trade_skip(build_event(), "reason_with_*_chars")
+
+    text = bot.send_message.await_args.kwargs["text"]
+    assert "\\_" in text
+    assert "\\*" in text
