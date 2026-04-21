@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+from analysis.trade_logger import TradeLogger
+from execution.binance_executor import ExecutionResult
+from models.decision import TradeDecision
+from models.events import OnChainEvent
+from models.snapshot import DecisionSnapshotBuilder
+
+
+def build_event() -> OnChainEvent:
+    return OnChainEvent(
+        chain="eth",
+        wallet="0xabc123",
+        tx_hash="0xtx",
+        block_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        tx_type="swap_in",
+        token_symbol="ETH",
+        amount_token=Decimal("1"),
+        amount_usd=Decimal("2000"),
+        raw={"block_number": 100},
+    )
+
+
+def build_decision(action: str = "buy") -> TradeDecision:
+    return TradeDecision(
+        action=action,
+        symbol="ETH/USDT",
+        quantity_usdt=1000.0,
+        confidence=80,
+        reasoning="analysis test",
+        source_wallet="0xabc123",
+    )
+
+
+def build_snapshot(action: str = "buy"):
+    builder = DecisionSnapshotBuilder(
+        event=build_event(),
+        symbol="ETH/USDT",
+        recorded_at=datetime(2026, 4, 21, 12, 1, tzinfo=timezone.utc),
+    )
+    if action == "skip":
+        return builder.skip("below_min_trade_usd")
+    return builder.execute(action)
+
+
+def build_result() -> ExecutionResult:
+    return ExecutionResult(
+        success=True,
+        filled_quantity=Decimal("0.5"),
+        avg_price=Decimal("2000"),
+        fee_usdt=Decimal("0.75"),
+        pre_trade_mid_price=Decimal("1999"),
+        estimated_slippage_pct=0.001,
+        realized_slippage_pct=0.0005,
+        estimated_fee_pct=0.0015,
+        realized_fee_pct=0.00075,
+        binance_order_id="order-1",
+        error=None,
+    )
+
+
+def test_log_fill_buy_creates_position_and_snapshot() -> None:
+    repo = Mock()
+    repo.record_trade.return_value = 42
+    logger = TradeLogger(repo)
+
+    trade_id = logger.log_fill(build_decision("buy"), build_result(), build_snapshot("buy"))
+
+    assert trade_id == 42
+    assert repo.record_trade.called
+    assert repo.record_snapshot.called
+    assert repo.upsert_position.called
+    snapshot = repo.record_snapshot.call_args.args[0]
+    assert snapshot.trade_id == 42
+
+
+def test_log_fill_sell_removes_position_if_zero() -> None:
+    repo = Mock()
+    repo.record_trade.return_value = 7
+    logger = TradeLogger(repo)
+
+    trade_id = logger.log_fill(build_decision("sell"), build_result(), build_snapshot("sell"))
+
+    assert trade_id == 7
+    assert repo.remove_position.called
+    snapshot = repo.record_snapshot.call_args.args[0]
+    assert snapshot.final_action == "sell"
+
+
+def test_log_skip_writes_snapshot_not_trade() -> None:
+    repo = Mock()
+    logger = TradeLogger(repo)
+
+    logger.log_skip(build_event(), "below_min_trade_usd", build_snapshot("skip"))
+
+    repo.record_snapshot.assert_called_once()
+    repo.record_trade.assert_not_called()
+
+
+def test_log_skip_snapshot_has_skip_reason() -> None:
+    repo = Mock()
+    logger = TradeLogger(repo)
+
+    logger.log_skip(build_event(), "below_min_trade_usd", build_snapshot("skip"))
+
+    snapshot = repo.record_snapshot.call_args.args[0]
+    assert snapshot.final_action == "skip"
+    assert snapshot.skip_reason
+    assert snapshot.trade_id is None
