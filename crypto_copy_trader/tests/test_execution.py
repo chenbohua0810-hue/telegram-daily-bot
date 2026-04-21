@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pandas as pd
+import pytest
+
+from execution.binance_executor import BinanceExecutor, ExecutionResult, NetworkError
 from models.portfolio import Portfolio, Position
+from models.decision import TradeDecision
 from execution.position_sizer import compute_position_size
 from execution.risk_guard import check_risk
 
@@ -138,3 +145,167 @@ def test_risk_multiple_reasons_all_listed() -> None:
 
     assert result.passed is False
     assert result.reasons == ["max_concurrent_reached", "daily_loss_circuit"]
+
+
+def build_decision(*, action: str = "buy", quantity_usdt: float = 1000.0) -> TradeDecision:
+    return TradeDecision(
+        action=action,
+        symbol="BTC/USDT",
+        quantity_usdt=quantity_usdt,
+        confidence=80,
+        reasoning="Execution test decision.",
+        source_wallet="0xabc123",
+    )
+
+
+def build_exchange() -> SimpleNamespace:
+    return SimpleNamespace(
+        load_markets=AsyncMock(return_value={"BTC/USDT": {}, "ETH/BTC": {}}),
+        fetch_ticker=AsyncMock(return_value={"last": 50000}),
+        fetch_ohlcv=AsyncMock(
+            return_value=[[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]]
+        ),
+        fetch_order_book=AsyncMock(return_value={"bids": [[49999, 1]], "asks": [[50001, 1]]}),
+        fetch_balance=AsyncMock(return_value={"free": {"USDT": 2000}}),
+        create_market_buy_order=AsyncMock(
+            return_value={"id": "buy-1", "average": 50000, "fee": {"cost": 0.75}}
+        ),
+        create_market_sell_order=AsyncMock(
+            return_value={"id": "sell-1", "average": 50000, "fee": {"cost": 0.75}}
+        ),
+    )
+
+
+async def _build_executor(
+    *,
+    paper_trading: bool,
+    exchange: SimpleNamespace | None = None,
+    trades_repo: object | None = None,
+) -> BinanceExecutor:
+    executor = BinanceExecutor(
+        api_key="key",
+        api_secret="secret",
+        paper_trading=paper_trading,
+        exchange=exchange or build_exchange(),
+        trades_repo=trades_repo or SimpleNamespace(record_trade=AsyncMock()),
+    )
+    return executor
+
+
+@pytest.mark.asyncio
+async def test_paper_trading_simulates_fill() -> None:
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=True, trades_repo=trades_repo)
+
+    result = await executor.execute(build_decision())
+
+    assert result.success is True
+    assert result.filled_quantity == Decimal("0.02")
+    assert result.avg_price == Decimal("50000")
+    assert result.pre_trade_mid_price == Decimal("50000")
+    assert result.realized_slippage_pct == 0.0
+    assert trades_repo.record_trade.await_args.kwargs["status"] == "paper"
+
+
+@pytest.mark.asyncio
+async def test_live_trading_calls_create_order() -> None:
+    exchange = build_exchange()
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=False, exchange=exchange, trades_repo=trades_repo)
+
+    await executor.execute(build_decision())
+
+    exchange.create_market_buy_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_live_trading_computes_realized_slippage() -> None:
+    exchange = build_exchange()
+    exchange.fetch_ticker = AsyncMock(return_value={"last": 100})
+    exchange.fetch_order_book = AsyncMock(return_value={"bids": [[99.5, 10]], "asks": [[100.5, 10]]})
+    exchange.create_market_buy_order = AsyncMock(
+        return_value={"id": "buy-1", "average": 100.5, "fee": {"cost": 1}}
+    )
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=False, exchange=exchange, trades_repo=trades_repo)
+
+    result = await executor.execute(build_decision(quantity_usdt=1000.0))
+
+    assert result.realized_slippage_pct == 0.005
+
+
+@pytest.mark.asyncio
+async def test_sell_slippage_sign_correct() -> None:
+    exchange = build_exchange()
+    exchange.fetch_ticker = AsyncMock(return_value={"last": 100})
+    exchange.fetch_order_book = AsyncMock(return_value={"bids": [[99.5, 10]], "asks": [[100.5, 10]]})
+    exchange.create_market_sell_order = AsyncMock(
+        return_value={"id": "sell-1", "average": 99.5, "fee": {"cost": 1}}
+    )
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=False, exchange=exchange, trades_repo=trades_repo)
+
+    result = await executor.execute(build_decision(action="sell", quantity_usdt=1000.0))
+
+    assert result.realized_slippage_pct == 0.005
+
+
+@pytest.mark.asyncio
+async def test_record_trade_receives_all_slippage_fields() -> None:
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=True, trades_repo=trades_repo)
+
+    await executor.execute(
+        build_decision(),
+        estimated_slippage_pct=0.003,
+        estimated_fee_pct=0.0015,
+    )
+
+    kwargs = trades_repo.record_trade.await_args.kwargs
+    assert kwargs["pre_trade_mid_price"] is not None
+    assert kwargs["estimated_slippage_pct"] is not None
+    assert kwargs["realized_slippage_pct"] is not None
+    assert kwargs["estimated_fee_pct"] is not None
+    assert kwargs["realized_fee_pct"] is not None
+
+
+@pytest.mark.asyncio
+async def test_execute_retries_on_network_error() -> None:
+    exchange = build_exchange()
+    exchange.create_market_buy_order = AsyncMock(
+        side_effect=[
+            NetworkError("temporary"),
+            {"id": "buy-1", "average": 50000, "fee": {"cost": 0.75}},
+        ]
+    )
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=False, exchange=exchange, trades_repo=trades_repo)
+
+    result = await executor.execute(build_decision())
+
+    assert result.success is True
+    assert exchange.create_market_buy_order.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_final_fail_records_status_failed() -> None:
+    exchange = build_exchange()
+    exchange.create_market_buy_order = AsyncMock(side_effect=[NetworkError("a"), NetworkError("b")])
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=False, exchange=exchange, trades_repo=trades_repo)
+
+    result = await executor.execute(build_decision())
+
+    assert result.success is False
+    assert trades_repo.record_trade.await_args.kwargs["status"] == "failed"
+    assert trades_repo.record_trade.await_args.kwargs["pre_trade_mid_price"] is None
+    assert trades_repo.record_trade.await_args.kwargs["realized_slippage_pct"] is None
+
+
+@pytest.mark.asyncio
+async def test_load_markets_filters_usdt_pairs() -> None:
+    executor = await _build_executor(paper_trading=True)
+
+    symbols = await executor.load_markets()
+
+    assert symbols == {"BTC/USDT"}
