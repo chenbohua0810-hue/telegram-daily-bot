@@ -116,9 +116,12 @@ class DecisionSnapshotBuilder:
 
     def with_risk(self, result: Any) -> "DecisionSnapshotBuilder":
         self._ensure_active()
+        multiplier = getattr(result, "multiplier", None)
+        if multiplier is None:
+            multiplier = getattr(result, "size_multiplier")
         self._risk = RiskSnapshotView(
             passed=result.passed,
-            multiplier=result.multiplier,
+            multiplier=multiplier,
             reasons=tuple(result.reasons),
         )
         return self

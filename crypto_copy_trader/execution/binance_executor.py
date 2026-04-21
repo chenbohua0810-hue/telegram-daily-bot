@@ -39,12 +39,14 @@ class BinanceExecutor:
         *,
         exchange: Any | None = None,
         trades_repo: Any | None = None,
+        record_trades: bool = True,
     ) -> None:
         self.api_key = api_key
         self.api_secret = api_secret
         self.paper_trading = paper_trading
         self.exchange = exchange
         self.trades_repo = trades_repo
+        self.record_trades = record_trades
         self._markets: set[str] = set()
 
     async def load_markets(self) -> set[str]:
@@ -251,7 +253,7 @@ class BinanceExecutor:
         estimated_fee_pct: float | None,
         realized_fee_pct: float | None,
     ) -> None:
-        if self.trades_repo is None:
+        if self.trades_repo is None or not self.record_trades:
             return
 
         record_trade = self.trades_repo.record_trade
