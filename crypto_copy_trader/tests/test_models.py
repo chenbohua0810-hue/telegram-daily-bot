@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
 from models.decision import TradeDecision
+from models.events import OnChainEvent
 from models.signals import (
     SentimentSignal,
     TechnicalSignal,
@@ -126,3 +129,22 @@ def test_classify_trust_low() -> None:
 
 def test_classify_trust_boundary_high_min() -> None:
     assert classify_trust_level(0.65, 50, 0.25) == "high"
+
+
+def test_event_roundtrip_jsonl() -> None:
+    event = OnChainEvent(
+        chain="eth",
+        wallet="0xabc123",
+        tx_hash="0xtxhash",
+        block_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        tx_type="swap_in",
+        token_symbol="WETH",
+        amount_token=Decimal("1.2345"),
+        amount_usd=Decimal("2500.12"),
+        raw={"hash": "0xtxhash", "token": "WETH"},
+    )
+
+    serialized = event.to_dict()
+    restored = OnChainEvent.from_dict(serialized)
+
+    assert restored == event
