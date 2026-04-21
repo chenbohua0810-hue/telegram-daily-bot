@@ -14,6 +14,7 @@ from models.signals import WalletScore
 from models.snapshot import DecisionSnapshotBuilder
 from storage.addresses_repo import AddressesRepo
 from storage.db import get_connection, init_addresses_db, init_trades_db
+from storage.event_log import EventLog
 from storage.trades_repo import TradesRepo
 
 
@@ -497,3 +498,57 @@ def test_get_snapshots_filter_by_symbol(tmp_path: pytest.TempPathFactory) -> Non
 
     assert len(snapshots) == 1
     assert snapshots[0].symbol == "BTC/USDT"
+
+
+def test_append_and_read_roundtrip(tmp_path: pytest.TempPathFactory) -> None:
+    log_path = tmp_path / "events.jsonl"
+    event_log = EventLog(str(log_path))
+    events = [
+        build_event(tx_hash="0x1"),
+        build_event(tx_hash="0x2"),
+        build_event(tx_hash="0x3"),
+    ]
+
+    for event in events:
+        event_log.append(event)
+
+    restored_events = list(event_log.iter_events())
+
+    assert restored_events == events
+
+
+def test_malformed_line_skipped(tmp_path: pytest.TempPathFactory, caplog: pytest.LogCaptureFixture) -> None:
+    log_path = tmp_path / "events.jsonl"
+    event_log = EventLog(str(log_path))
+    event_log.append(build_event(tx_hash="0x1"))
+    log_path.write_text(log_path.read_text() + "{broken\n", encoding="utf-8")
+
+    events = list(event_log.iter_events())
+
+    assert len(events) == 1
+    assert "Skipping malformed event log line" in caplog.text
+
+
+def test_since_filter(tmp_path: pytest.TempPathFactory) -> None:
+    log_path = tmp_path / "events.jsonl"
+    event_log = EventLog(str(log_path))
+
+    with freeze_time("2026-04-21 10:00:00+00:00"):
+        older_event = build_event(
+            tx_hash="0xold",
+            block_time=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
+        )
+        event_log.append(older_event)
+
+    with freeze_time("2026-04-21 11:30:00+00:00"):
+        recent_event = build_event(
+            tx_hash="0xnew",
+            block_time=datetime(2026, 4, 21, 11, 30, tzinfo=timezone.utc),
+        )
+        event_log.append(recent_event)
+
+    events = list(
+        event_log.iter_events(since=datetime(2026, 4, 21, 11, 0, tzinfo=timezone.utc))
+    )
+
+    assert events == [recent_event]
