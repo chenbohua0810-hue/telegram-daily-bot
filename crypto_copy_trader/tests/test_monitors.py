@@ -3,12 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 
 from models.events import OnChainEvent
 from monitors.base import ChainMonitor
+from monitors.eth_monitor import EthMonitor
 from storage.addresses_repo import AddressesRepo
 
 
@@ -103,3 +107,130 @@ def _wallet(*, address: str, chain: str, status: str):
         trust_level="high",
         status=status,
     )
+
+
+def _fixture_path(name: str) -> Path:
+    return Path(__file__).parent / "fixtures" / name
+
+
+@pytest.mark.asyncio
+async def test_eth_monitor_parses_tokentx(tmp_path: pytest.TempPathFactory) -> None:
+    db_path = tmp_path / "addresses.db"
+    repo = AddressesRepo(str(db_path))
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            status_code=200,
+            json=json.loads(_fixture_path("eth_tx_sample.json").read_text(encoding="utf-8")),
+        )
+    )
+    client = httpx.AsyncClient(transport=transport)
+    price_map = {
+        "ETH/USDT": Decimal("2000"),
+        "UNI/USDT": Decimal("10"),
+        "LINK/USDT": Decimal("15"),
+    }
+
+    monitor = EthMonitor(
+        api_key="key",
+        addresses_repo=repo,
+        event_log=Mock(),
+        price_fetcher=AsyncMock(side_effect=lambda symbol: price_map[symbol]),
+        binance_symbols=set(price_map),
+        client=client,
+    )
+
+    try:
+        events = await monitor.fetch_new_transactions("0xabc123", since_block=100)
+    finally:
+        await client.aclose()
+
+    assert len(events) == 3
+    assert events[0].tx_type == "swap_in"
+    assert events[1].tx_type == "swap_out"
+    assert events[2].amount_usd == Decimal("15")
+
+
+@pytest.mark.asyncio
+async def test_eth_monitor_filters_contract_txs(tmp_path: pytest.TempPathFactory) -> None:
+    db_path = tmp_path / "addresses.db"
+    repo = AddressesRepo(str(db_path))
+    payload = {
+        "status": "1",
+        "message": "OK",
+        "result": [
+            {
+                "blockNumber": "101",
+                "timeStamp": "1776772800",
+                "hash": "0xburn",
+                "from": "0xaaa",
+                "to": "0x0",
+                "value": "1000000000000000000",
+                "tokenDecimal": "18",
+                "tokenSymbol": "ETH",
+            },
+            {
+                "blockNumber": "102",
+                "timeStamp": "1776772860",
+                "hash": "0xkeep",
+                "from": "0xaaa",
+                "to": "0xabc123",
+                "value": "2000000000000000000",
+                "tokenDecimal": "18",
+                "tokenSymbol": "ETH",
+            },
+        ],
+    }
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status_code=200, json=payload))
+    )
+
+    monitor = EthMonitor(
+        api_key="key",
+        addresses_repo=repo,
+        event_log=Mock(),
+        price_fetcher=AsyncMock(return_value=Decimal("2000")),
+        binance_symbols={"ETH/USDT"},
+        client=client,
+    )
+
+    try:
+        events = await monitor.fetch_new_transactions("0xabc123", since_block=100)
+    finally:
+        await client.aclose()
+
+    assert [event.tx_hash for event in events] == ["0xkeep"]
+
+
+@pytest.mark.asyncio
+async def test_eth_monitor_retry_on_5xx(tmp_path: pytest.TempPathFactory) -> None:
+    db_path = tmp_path / "addresses.db"
+    repo = AddressesRepo(str(db_path))
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(status_code=500, json={"status": "0", "result": []})
+
+        return httpx.Response(
+            status_code=200,
+            json=json.loads(_fixture_path("eth_tx_sample.json").read_text(encoding="utf-8")),
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monitor = EthMonitor(
+        api_key="key",
+        addresses_repo=repo,
+        event_log=Mock(),
+        price_fetcher=AsyncMock(return_value=Decimal("2000")),
+        binance_symbols={"ETH/USDT", "UNI/USDT", "LINK/USDT"},
+        client=client,
+    )
+
+    try:
+        events = await monitor.fetch_new_transactions("0xabc123", since_block=100)
+    finally:
+        await client.aclose()
+
+    assert len(events) == 3
+    assert calls["count"] == 2
