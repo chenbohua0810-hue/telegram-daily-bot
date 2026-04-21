@@ -3,5 +3,39 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-telegram-daily-bot/
+
 .worktrees/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors/IDEs
+.vscode/
+.idea/
+*.iml
+
+# Python
+.python-version
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.mypy_cache/
+.tox/
+.cache/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env.*
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
