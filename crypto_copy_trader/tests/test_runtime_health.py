@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 from freezegun import freeze_time
 
@@ -61,6 +62,9 @@ def test_build_runtime_health_report_returns_zeroed_values_when_no_runtime_data(
     assert report.paper_trade_count == 0
     assert report.avg_estimated_slippage_pct is None
     assert report.avg_realized_slippage_pct is None
+    assert report.backend_fallback_rate == 0.0
+    assert report.batch_flush_latency_ms == 0.0
+    assert report.ws_reconnect_count == {}
 
 
 def test_build_runtime_health_report_summarizes_runtime_artifacts(tmp_path) -> None:
@@ -118,6 +122,12 @@ def test_build_runtime_health_report_summarizes_runtime_artifacts(tmp_path) -> N
             trades_db_path=trades_db_path,
             events_log_path=str(tmp_path / "events.jsonl"),
             lookback_hours=24,
+            fallback_backend=SimpleNamespace(fallback_rate=0.25),
+            batch_scorer=SimpleNamespace(batch_flush_latency_ms=18.5),
+            websocket_monitors={
+                "eth": SimpleNamespace(ws_reconnect_count=2),
+                "sol": SimpleNamespace(ws_reconnect_count=1),
+            },
         )
 
     assert report.event_count == 1
@@ -127,3 +137,6 @@ def test_build_runtime_health_report_summarizes_runtime_artifacts(tmp_path) -> N
     assert report.paper_trade_count == 1
     assert report.avg_estimated_slippage_pct == 0.0015
     assert report.avg_realized_slippage_pct == 0.0025
+    assert report.backend_fallback_rate == 0.25
+    assert report.batch_flush_latency_ms == 18.5
+    assert report.ws_reconnect_count == {"eth": 2, "sol": 1}

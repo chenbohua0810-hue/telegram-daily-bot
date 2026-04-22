@@ -4,6 +4,8 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
+
 from storage.db import get_connection
 from storage.event_log import EventLog
 from storage.trades_repo import TradesRepo
@@ -19,6 +21,9 @@ class RuntimeHealthReport:
     paper_trade_count: int
     avg_estimated_slippage_pct: float | None
     avg_realized_slippage_pct: float | None
+    backend_fallback_rate: float
+    batch_flush_latency_ms: float
+    ws_reconnect_count: dict[str, int]
 
 
 def build_runtime_health_report(
@@ -27,6 +32,9 @@ def build_runtime_health_report(
     trades_db_path: str,
     events_log_path: str,
     lookback_hours: int = 24,
+    fallback_backend: Any | None = None,
+    batch_scorer: Any | None = None,
+    websocket_monitors: dict[str, Any] | None = None,
 ) -> RuntimeHealthReport:
     since = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
     trades_repo = TradesRepo(trades_db_path)
@@ -40,6 +48,9 @@ def build_runtime_health_report(
         paper_trade_count=_paper_trade_count(trades_repo, lookback_hours),
         avg_estimated_slippage_pct=_average_trade_metric(trades_repo, lookback_hours, "estimated_slippage_pct"),
         avg_realized_slippage_pct=_average_trade_metric(trades_repo, lookback_hours, "realized_slippage_pct"),
+        backend_fallback_rate=_backend_fallback_rate(fallback_backend),
+        batch_flush_latency_ms=_batch_flush_latency_ms(batch_scorer),
+        ws_reconnect_count=_ws_reconnect_count(websocket_monitors),
     )
 
 
@@ -54,6 +65,9 @@ def format_runtime_health_report(report: RuntimeHealthReport) -> str:
             f"paper_trade_count: {report.paper_trade_count}",
             f"avg_estimated_slippage_pct: {_format_optional_float(report.avg_estimated_slippage_pct)}",
             f"avg_realized_slippage_pct: {_format_optional_float(report.avg_realized_slippage_pct)}",
+            f"backend_fallback_rate: {_format_optional_float(report.backend_fallback_rate)}",
+            f"batch_flush_latency_ms: {_format_optional_float(report.batch_flush_latency_ms)}",
+            f"ws_reconnect_count: {json.dumps(report.ws_reconnect_count, sort_keys=True)}",
         )
     )
 
@@ -105,6 +119,23 @@ def _average_trade_metric(
     if not values:
         return None
     return sum(values) / len(values)
+
+
+def _backend_fallback_rate(fallback_backend: Any | None) -> float:
+    return 0.0 if fallback_backend is None else float(getattr(fallback_backend, "fallback_rate", 0.0))
+
+
+def _batch_flush_latency_ms(batch_scorer: Any | None) -> float:
+    return 0.0 if batch_scorer is None else float(getattr(batch_scorer, "batch_flush_latency_ms", 0.0))
+
+
+def _ws_reconnect_count(websocket_monitors: dict[str, Any] | None) -> dict[str, int]:
+    if websocket_monitors is None:
+        return {}
+    return {
+        chain: int(getattr(monitor, "ws_reconnect_count", 0))
+        for chain, monitor in websocket_monitors.items()
+    }
 
 
 def _format_optional_float(value: float | None) -> str:
