@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from models.events import OnChainEvent
 from models.signals import SentimentSignal, TechnicalSignal, WalletScore
 from signals.ai_scorer import AIScorerError, score_signal
+from signals.llm_backend import LLMBackendError
 
 
 def build_event() -> OnChainEvent:
@@ -54,26 +53,33 @@ def build_sentiment() -> SentimentSignal:
     return SentimentSignal(signal="bullish", score=0.7, source_count=10)
 
 
-def build_client(*responses: str) -> SimpleNamespace:
-    async def create(**kwargs):
-        payload = responses_list.pop(0)
-        return SimpleNamespace(content=[SimpleNamespace(text=payload)])
+class _MockBackend:
+    """Minimal LLMBackend stand-in for score_signal tests."""
 
-    responses_list = list(responses)
-    return SimpleNamespace(messages=SimpleNamespace(create=AsyncMock(side_effect=create)))
+    name = "mock"
+
+    def __init__(self, response: dict | Exception) -> None:
+        self._response = response
+
+    async def score_one(self, prompt: str, *, max_tokens: int) -> dict:
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+    async def score_batch(self, prompts: list[str], *, max_tokens: int) -> list[dict]:
+        return [await self.score_one(p, max_tokens=max_tokens) for p in prompts]
 
 
 @pytest.mark.asyncio
 async def test_ai_scorer_happy_path() -> None:
-    client = build_client('{"confidence_score":75,"reasoning":"趨勢與情緒一致","recommendation":"execute"}')
+    backend = _MockBackend({"confidence_score": 75, "reasoning": "趨勢與情緒一致", "recommendation": "execute"})
 
     result = await score_signal(
         event=build_event(),
         wallet=build_wallet(),
         technical=build_technical(),
         sentiment=build_sentiment(),
-        anthropic_client=client,
-        model="claude-test",
+        backend=backend,
     )
 
     assert result.confidence_score == 75
@@ -81,28 +87,8 @@ async def test_ai_scorer_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ai_scorer_invalid_json_retries() -> None:
-    client = build_client(
-        "not json",
-        '{"confidence_score":65,"reasoning":"第二次成功","recommendation":"execute"}',
-    )
-
-    result = await score_signal(
-        event=build_event(),
-        wallet=build_wallet(),
-        technical=build_technical(),
-        sentiment=build_sentiment(),
-        anthropic_client=client,
-        model="claude-test",
-    )
-
-    assert result.confidence_score == 65
-    assert client.messages.create.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_ai_scorer_all_fails_raises() -> None:
-    client = build_client("not json", "still not json")
+async def test_ai_scorer_backend_error_raises_scorer_error() -> None:
+    backend = _MockBackend(LLMBackendError("all attempts failed"))
 
     with pytest.raises(AIScorerError):
         await score_signal(
@@ -110,22 +96,20 @@ async def test_ai_scorer_all_fails_raises() -> None:
             wallet=build_wallet(),
             technical=build_technical(),
             sentiment=build_sentiment(),
-            anthropic_client=client,
-            model="claude-test",
+            backend=backend,
         )
 
 
 @pytest.mark.asyncio
-async def test_ai_scorer_low_confidence_forces_skip() -> None:
-    client = build_client('{"confidence_score":59,"reasoning":"信心不足","recommendation":"execute"}')
+async def test_ai_scorer_low_confidence_returned_unchanged() -> None:
+    backend = _MockBackend({"confidence_score": 59, "reasoning": "信心不足", "recommendation": "execute"})
 
     result = await score_signal(
         event=build_event(),
         wallet=build_wallet(),
         technical=build_technical(),
         sentiment=build_sentiment(),
-        anthropic_client=client,
-        model="claude-test",
+        backend=backend,
     )
 
     assert result.confidence_score == 59
@@ -133,18 +117,15 @@ async def test_ai_scorer_low_confidence_forces_skip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ai_scorer_strips_markdown_fence() -> None:
-    client = build_client(
-        '```json\n{"confidence_score":72,"reasoning":"可執行","recommendation":"execute"}\n```'
-    )
+async def test_ai_scorer_skip_recommendation_preserved() -> None:
+    backend = _MockBackend({"confidence_score": 80, "reasoning": "不利", "recommendation": "skip"})
 
     result = await score_signal(
         event=build_event(),
         wallet=build_wallet(),
         technical=build_technical(),
         sentiment=build_sentiment(),
-        anthropic_client=client,
-        model="claude-test",
+        backend=backend,
     )
 
-    assert result.confidence_score == 72
+    assert result.recommendation == "skip"

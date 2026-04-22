@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+from signals.llm_backend import LLMBackendError
+
+if TYPE_CHECKING:
+    from signals.llm_backend import LLMBackend
 
 
 PROMPT_SYSTEM = (
@@ -59,8 +63,7 @@ async def score_signal(
     wallet,
     technical,
     sentiment,
-    anthropic_client,
-    model: str,
+    backend: "LLMBackend",
 ) -> AIScore:
     prompt = PROMPT_USER_TEMPLATE.format(
         wallet_address=wallet.address,
@@ -84,35 +87,12 @@ async def score_signal(
         source_count=sentiment.source_count,
     )
 
-    last_error: Exception | None = None
-    for _ in range(2):
-        try:
-            response = await anthropic_client.messages.create(
-                model=model,
-                max_tokens=300,
-                system=PROMPT_SYSTEM,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = _strip_markdown_fence(response.content[0].text)
-            payload = json.loads(text)
-            return AIScore(
-                confidence_score=int(payload["confidence_score"]),
-                reasoning=str(payload["reasoning"]),
-                recommendation=payload["recommendation"],
-            )
-        except Exception as error:
-            last_error = error
-
-    raise AIScorerError("Failed to score signal") from last_error
-
-
-def _strip_markdown_fence(value: str) -> str:
-    text = value.strip()
-    if text.startswith("```") and text.endswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        return "\n".join(lines).strip()
-    return text
+    try:
+        payload = await backend.score_one(prompt, max_tokens=300)
+        return AIScore(
+            confidence_score=int(payload["confidence_score"]),
+            reasoning=str(payload["reasoning"]),
+            recommendation=payload["recommendation"],
+        )
+    except LLMBackendError as exc:
+        raise AIScorerError("Failed to score signal") from exc
