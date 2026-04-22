@@ -22,9 +22,18 @@ from models.decision import TradeDecision
 from models.events import OnChainEvent
 from models.snapshot import DecisionSnapshot
 from monitors.bsc_monitor import BscMonitor
+from monitors.bsc_ws_monitor import BscWebSocketMonitor
 from monitors.eth_monitor import EthMonitor
+from monitors.eth_ws_monitor import EthWebSocketMonitor
 from monitors.sol_monitor import SolMonitor
-from signals.ai_scorer import AIScorerError, score_signal
+from monitors.sol_ws_monitor import SolWebSocketMonitor
+from signals.ai_scorer import AIScorerError, PROMPT_SYSTEM, AIScore, score_signal
+from signals.backends.anthropic_backend import AnthropicBackend
+from signals.backends.fallback_backend import FallbackBackend
+from signals.backends.openai_compat_backend import OpenAICompatBackend
+from signals.batch_scorer import BatchScorer
+from signals.llm_backend import LLMBackendError
+from signals.priority_router import assign_priority
 from signals.quant_filter import quant_filter
 from signals.sentiment import compute_sentiment
 from signals.slippage_fee import estimate_cost, should_reject
@@ -46,6 +55,8 @@ class PipelineDeps:
     trades_repo: TradesRepo
     executor: Any
     anthropic: Any
+    claude_backend: Any
+    batch_scorer: Any
     notifier: Any
     trade_logger: TradeLogger
     http: Any
@@ -87,8 +98,19 @@ async def process_event(
             deps.settings.MIN_TRADE_USD,
             recent_events=deps.recent_events_cache,
         )
-        if not passed:
-            return _log_skip(event, reason, builder, deps)
+
+        known_tokens = deps.trades_repo.get_traded_symbols()
+        priority = assign_priority(
+            event,
+            wallet,
+            known_tokens=known_tokens,
+            quant_passed=passed,
+            high_value_usd=deps.settings.HIGH_VALUE_USD_THRESHOLD,
+            p1_min_usd=deps.settings.P1_HIGH_TRUST_MIN_USD,
+            p1_min_win_rate=deps.settings.P1_HIGH_TRUST_RECENT_WINRATE,
+        )
+        if priority.level == "P3":
+            return _log_skip(event, f"p3:{priority.reason}", builder, deps)
 
         ohlcv = await deps.executor.fetch_ohlcv(symbol, "1h", 200)
         technical_signal, technical_indicators = compute_technicals(ohlcv)
@@ -101,17 +123,34 @@ async def process_event(
         )
         builder.with_sentiment(sentiment_signal, sentiment_counts)
 
-        try:
-            ai = await score_signal(
-                event=event,
-                wallet=wallet,
-                technical=technical_signal,
-                sentiment=sentiment_signal,
-                anthropic_client=deps.anthropic,
-                model=deps.settings.AI_SCORER_MODEL,
+        if priority.level == "P1":
+            ai = AIScore(
+                confidence_score=100,
+                reasoning="P1_direct_copy_trade",
+                recommendation="execute",
             )
-        except AIScorerError:
-            return _log_skip(event, "ai_scorer_error", builder, deps)
+        elif priority.level == "P0":
+            try:
+                ai = await score_signal(
+                    event=event,
+                    wallet=wallet,
+                    technical=technical_signal,
+                    sentiment=sentiment_signal,
+                    backend=deps.claude_backend,
+                )
+            except AIScorerError:
+                return _log_skip(event, "ai_scorer_error", builder, deps)
+        else:
+            try:
+                batch_result = await deps.batch_scorer.submit(
+                    event=event,
+                    wallet=wallet,
+                    technical=technical_signal,
+                    sentiment=sentiment_signal,
+                )
+                ai = await batch_result if isinstance(batch_result, asyncio.Future) else batch_result
+            except LLMBackendError:
+                return _log_skip(event, "llm_backend_exhausted", builder, deps)
 
         builder.with_ai(ai)
         if (
@@ -235,6 +274,11 @@ async def build_runtime() -> Runtime:
     tracker = PerformanceTracker(trades_repo)
     trade_logger = TradeLogger(trades_repo)
     anthropic_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    claude_backend = AnthropicBackend(
+        client=anthropic_client,
+        model=settings.AI_SCORER_MODEL,
+        system_prompt=PROMPT_SYSTEM,
+    )
     wallet_scorer = WalletScorer(
         addresses_repo=addresses_repo,
         trades_repo=trades_repo,
@@ -244,12 +288,40 @@ async def build_runtime() -> Runtime:
 
     btc_24h_vol_pct = await _fetch_btc_24h_volatility(executor)
     shared_http = httpx.AsyncClient(timeout=10)
+    primary_backend = OpenAICompatBackend(
+        client=shared_http,
+        base_url=settings.LLM_PRIMARY_BASE_URL,
+        model=settings.LLM_PRIMARY_MODEL,
+        api_key=settings.LLM_PRIMARY_API_KEY,
+        name=settings.LLM_PRIMARY_NAME,
+    )
+    fallback_backends: list[Any] = [primary_backend]
+    if settings.LLM_SECONDARY_BASE_URL:
+        fallback_backends = [
+            *fallback_backends,
+            OpenAICompatBackend(
+                client=shared_http,
+                base_url=settings.LLM_SECONDARY_BASE_URL,
+                model=settings.LLM_SECONDARY_MODEL or settings.LLM_PRIMARY_MODEL,
+                api_key=settings.LLM_SECONDARY_API_KEY or settings.LLM_PRIMARY_API_KEY,
+                name=settings.LLM_SECONDARY_NAME or "secondary",
+            ),
+        ]
+    fallback_backends = [*fallback_backends, claude_backend]
+    p2_backend = FallbackBackend(fallback_backends)
+    batch_scorer = BatchScorer(
+        backend=p2_backend,
+        window_seconds=settings.BATCH_WINDOW_SECONDS,
+        max_batch_size=settings.BATCH_MAX_SIZE,
+    )
     deps = PipelineDeps(
         settings=settings,
         addresses_repo=addresses_repo,
         trades_repo=trades_repo,
         executor=executor,
         anthropic=anthropic_client,
+        claude_backend=claude_backend,
+        batch_scorer=batch_scorer,
         notifier=notifier,
         trade_logger=trade_logger,
         http=shared_http,
@@ -258,7 +330,7 @@ async def build_runtime() -> Runtime:
         btc_24h_vol_pct=btc_24h_vol_pct,
         correlation_provider=lambda new_symbol, existing_symbols: {},
     )
-    monitors = [
+    rest_monitors = [
         EthMonitor(
             settings.ETHERSCAN_API_KEY,
             addresses_repo,
@@ -284,6 +356,29 @@ async def build_runtime() -> Runtime:
             client=shared_http,
         ),
     ]
+    if settings.USE_WEBSOCKET:
+        monitors = [
+            EthWebSocketMonitor(
+                rest_monitor=rest_monitors[0],
+                ws_url=settings.ETH_WSS_URL,
+                heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
+                reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
+            ),
+            SolWebSocketMonitor(
+                rest_monitor=rest_monitors[1],
+                ws_url=settings.SOL_WSS_URL,
+                heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
+                reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
+            ),
+            BscWebSocketMonitor(
+                rest_monitor=rest_monitors[2],
+                ws_url=settings.BSC_WSS_URL,
+                heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
+                reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
+            ),
+        ]
+    else:
+        monitors = rest_monitors
     return Runtime(deps=deps, tracker=tracker, wallet_scorer=wallet_scorer, monitors=monitors)
 
 
@@ -293,12 +388,19 @@ async def main() -> None:
 
     asyncio.create_task(wallet_scorer_loop(runtime.wallet_scorer))
     asyncio.create_task(daily_summary_loop(runtime.tracker, runtime.deps.trades_repo, runtime.deps.notifier))
+    stream_iterators = [monitor.stream().__aiter__() for monitor in runtime.monitors] if runtime.deps.settings.USE_WEBSOCKET else []
 
     try:
         while True:
-            events: list[OnChainEvent] = []
-            for monitor in runtime.monitors:
-                events.extend(await monitor.poll_once())
+            if runtime.deps.settings.USE_WEBSOCKET:
+                events = await _read_websocket_events_once(
+                    stream_iterators,
+                    timeout_seconds=runtime.deps.settings.POLL_INTERVAL_SECONDS,
+                )
+            else:
+                events = []
+                for monitor in runtime.monitors:
+                    events.extend(await monitor.poll_once())
 
             portfolio = await runtime.deps.executor.fetch_portfolio()
             daily_pnl = runtime.tracker.daily_pnl_pct()
@@ -312,10 +414,27 @@ async def main() -> None:
             )
             await process_events(events, portfolio, daily_pnl, runtime.deps)
             runtime.tracker.update_daily_pnl(portfolio.total_value_usdt)
-            await asyncio.sleep(runtime.deps.settings.POLL_INTERVAL_SECONDS)
+            if not runtime.deps.settings.USE_WEBSOCKET:
+                await asyncio.sleep(runtime.deps.settings.POLL_INTERVAL_SECONDS)
     finally:
+        await runtime.deps.batch_scorer.flush()
         await runtime.deps.http.aclose()
         await runtime.deps.executor.exchange.close()
+
+
+async def _read_websocket_events_once(
+    stream_iterators: list[Any],
+    *,
+    timeout_seconds: int,
+) -> list[OnChainEvent]:
+    events: list[OnChainEvent] = []
+    for iterator in stream_iterators:
+        try:
+            event = await asyncio.wait_for(iterator.__anext__(), timeout=timeout_seconds)
+        except (StopAsyncIteration, TimeoutError):
+            continue
+        events.append(event)
+    return events
 
 
 def _new_snapshot_builder(event: OnChainEvent, symbol: str):

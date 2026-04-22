@@ -22,6 +22,7 @@ from models.signals import (
     WalletScore,
 )
 from signals.ai_scorer import AIScore
+from signals.priority_router import PriorityDecision
 from signals.slippage_fee import CostEstimate
 from storage.addresses_repo import AddressesRepo
 from storage.trades_repo import TradesRepo
@@ -162,12 +163,17 @@ def build_deps(tmp_path, monkeypatch: pytest.MonkeyPatch) -> tuple[PipelineDeps,
             MAX_CONCURRENT_POSITIONS=10,
             AI_SCORER_CONFIDENCE_THRESHOLD=60,
             AI_SCORER_MODEL="claude-haiku-4-5-20251001",
-            CRYPTOPANIC_API_KEY="cryptopanic",
+            CRYPTOPANIC_API_KEY="***",
+            HIGH_VALUE_USD_THRESHOLD=50000.0,
+            P1_HIGH_TRUST_MIN_USD=20000.0,
+            P1_HIGH_TRUST_RECENT_WINRATE=0.60,
         ),
         addresses_repo=addresses_repo,
         trades_repo=trades_repo,
         executor=executor,
         anthropic=SimpleNamespace(),
+        claude_backend=SimpleNamespace(score_one=AsyncMock()),
+        batch_scorer=SimpleNamespace(submit=AsyncMock(return_value=build_ai_score())),
         notifier=notifier,
         trade_logger=trade_logger,
         http=SimpleNamespace(),
@@ -179,6 +185,16 @@ def build_deps(tmp_path, monkeypatch: pytest.MonkeyPatch) -> tuple[PipelineDeps,
     monkeypatch.setattr("main.compute_technicals", Mock(return_value=build_technicals()))
     monkeypatch.setattr("main.compute_sentiment", AsyncMock(return_value=build_sentiment()))
     monkeypatch.setattr("main.score_signal", AsyncMock(return_value=build_ai_score()))
+    monkeypatch.setattr(
+        "main.assign_priority",
+        Mock(
+            side_effect=lambda event, wallet, **kwargs: (
+                PriorityDecision(level="P3", reason="quant_filter_failed")
+                if not kwargs["quant_passed"]
+                else PriorityDecision(level="P0", reason="high_value_usd")
+            )
+        ),
+    )
     monkeypatch.setattr(
         "main.check_risk",
         Mock(return_value=RiskCheckResult(passed=True, size_multiplier=1.0, reasons=[])),
@@ -222,7 +238,7 @@ async def test_pipeline_quant_filter_short_circuits_but_logs_snapshot(
     snapshots = trades_repo.get_snapshots(limit=10)
     assert len(snapshots) == 1
     assert snapshots[0].final_action == "skip"
-    assert snapshots[0].skip_reason == "below_min_trade_usd"
+    assert snapshots[0].skip_reason == "p3:quant_filter_failed"
     assert snapshots[0].technical is None
     assert snapshots[0].sentiment is None
     assert snapshots[0].ai_confidence is None

@@ -229,6 +229,20 @@ class TradesRepo:
 
         return [dict(row) for row in rows]
 
+    def get_traded_symbols(self) -> set[str]:
+        connection = get_connection(self._db_path)
+
+        try:
+            rows = connection.execute("SELECT DISTINCT symbol FROM trades").fetchall()
+        finally:
+            connection.close()
+
+        return {
+            str(row["symbol"]).split("/USDT", maxsplit=1)[0]
+            for row in rows
+            if row["symbol"]
+        }
+
     def record_snapshot(self, snapshot: DecisionSnapshot) -> int:
         technical = snapshot.technical
         indicators = snapshot.technical_indicators

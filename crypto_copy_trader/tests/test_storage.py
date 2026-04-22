@@ -416,6 +416,50 @@ def test_recent_trades_filters_by_hour(tmp_path: pytest.TempPathFactory) -> None
     assert [trade["symbol"] for trade in trades] == ["BTC/USDT"]
 
 
+def test_get_traded_symbols_returns_distinct_base_symbols(tmp_path: pytest.TempPathFactory) -> None:
+    db_path = tmp_path / "trades.db"
+    repo = TradesRepo(str(db_path))
+
+    repo.record_trade(
+        symbol="ETH/USDT",
+        action="buy",
+        quantity=Decimal("1"),
+        price=Decimal("100"),
+        fee_usdt=Decimal("0.1"),
+        source_wallet="0xwallet-1",
+        confidence=80,
+        reasoning="eth trade",
+        status="filled",
+        paper_trading=False,
+    )
+    repo.record_trade(
+        symbol="SOL/USDT",
+        action="buy",
+        quantity=Decimal("2"),
+        price=Decimal("50"),
+        fee_usdt=Decimal("0.2"),
+        source_wallet="0xwallet-2",
+        confidence=78,
+        reasoning="sol trade",
+        status="filled",
+        paper_trading=False,
+    )
+    repo.record_trade(
+        symbol="ETH/USDT",
+        action="sell",
+        quantity=Decimal("0.5"),
+        price=Decimal("120"),
+        fee_usdt=Decimal("0.1"),
+        source_wallet="0xwallet-1",
+        confidence=82,
+        reasoning="eth exit",
+        status="filled",
+        paper_trading=False,
+    )
+
+    assert repo.get_traded_symbols() == {"ETH", "SOL"}
+
+
 def test_record_snapshot_skip_path(tmp_path: pytest.TempPathFactory) -> None:
     db_path = tmp_path / "trades.db"
     repo = TradesRepo(str(db_path))
