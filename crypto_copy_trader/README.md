@@ -5,30 +5,35 @@
 ## Architecture
 
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│                  crypto_copy_trader/                            │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Layer 1: Chain Monitor                                  │   │
-│  │  EthMonitor   SolanaMonitor   BSCMonitor                 │   │
-│  │       └──────────┬──────────────┘                        │   │
-│  └──────────────────┼───────────────────────────────────────┘   │
-│                     ↓                                           │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Layer 2: Signal Pipeline                                │   │
-│  │  QuantFilter → AIScorer → SlippageFeeEstimator           │   │
-│  └──────────────────┬───────────────────────────────────────┘   │
-│                     ↓                                           │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Layer 3: Execution                                      │   │
-│  │  PositionSizer → BinanceExecutor → RiskGuard             │   │
-│  └──────────────────┬───────────────────────────────────────┘   │
-│                     ↓                                           │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Layer 4: Analytics & Notifier                           │   │
-│  │  TradeLogger → PerformanceTracker → TelegramNotifier     │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         crypto_copy_trader/                             │
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Layer 1: Chain Monitor                                            │  │
+│  │ REST monitors + optional WebSocket monitors with reconnect/backfill│  │
+│  │ Eth / Sol / BSC                                                   │  │
+│  └───────────────────────────────┬───────────────────────────────────┘  │
+│                                  ↓                                      │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Layer 2: Signal Pipeline                                          │  │
+│  │ QuantFilter → PriorityRouter → LLM Routing                        │  │
+│  │   P0: Claude direct                                               │  │
+│  │   P1: direct copy trade                                            │  │
+│  │   P2: BatchScorer → fallback backends                              │  │
+│  │   P3: skip                                                         │  │
+│  └───────────────────────────────┬───────────────────────────────────┘  │
+│                                  ↓                                      │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Layer 3: Execution                                                │  │
+│  │ PositionSizer → RiskGuard → SlippageFeeEstimator → BinanceExecutor│  │
+│  └───────────────────────────────┬───────────────────────────────────┘  │
+│                                  ↓                                      │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Layer 4: Analytics & Health                                       │  │
+│  │ TradeLogger → PerformanceTracker → TelegramNotifier               │  │
+│  │ verification.runtime_health                                       │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Setup
@@ -58,6 +63,26 @@ python -m crypto_copy_trader.main
 - `BINANCE_API_KEY`
 - `BINANCE_API_SECRET`
 - `ANTHROPIC_API_KEY`
+- `LLM_PRIMARY_NAME`
+- `LLM_PRIMARY_BASE_URL`
+- `LLM_PRIMARY_MODEL`
+- `LLM_PRIMARY_API_KEY`
+- `LLM_SECONDARY_NAME`
+- `LLM_SECONDARY_BASE_URL`
+- `LLM_SECONDARY_MODEL`
+- `LLM_SECONDARY_API_KEY`
+- `BATCH_WINDOW_SECONDS`
+- `BATCH_MAX_SIZE`
+- `BATCH_MAX_INPUT_TOKENS`
+- `HIGH_VALUE_USD_THRESHOLD`
+- `P1_HIGH_TRUST_MIN_USD`
+- `P1_HIGH_TRUST_RECENT_WINRATE`
+- `USE_WEBSOCKET`
+- `ETH_WSS_URL`
+- `SOL_WSS_URL`
+- `BSC_WSS_URL`
+- `WS_HEARTBEAT_TIMEOUT_SECONDS`
+- `WS_RECONNECT_BACKOFF_CAP_SECONDS`
 - `CRYPTOPANIC_API_KEY`
 - `ETHERSCAN_API_KEY`
 - `SOLSCAN_API_KEY`
