@@ -9,7 +9,7 @@
 
 - `pytest --cov`
   - 已補裝 `pytest-cov`
-  - 本地實測總覆蓋率 `93%`，高於 `80%`
+  - 本地實測總覆蓋率 `87.27%`，高於 `80%`
 
 - 離線整合測試已覆蓋下列驗收點
   - 通過全部 filter 的事件會寫入 `status='paper'` trade
@@ -26,6 +26,7 @@
 - `python -m crypto_copy_trader.main` 在 `PAPER_TRADING=true` 下連續跑 1 小時無 crash
 - Telegram 收到啟動通知
 - `data/events.jsonl` 至少寫入 1 筆事件
+- 已補 `python -m verification.runtime_health --hours 24`，可在真實環境直接彙整 runtime artifacts
 
 ## Wallet Scorer Runtime Check
 
@@ -34,7 +35,13 @@
 
 ## 24h Paper Trading Health Check
 
-- 連續跑 24 小時 paper trading 後，執行以下 SQL 健檢：
+- 連續跑 24 小時 paper trading 後，執行：
+
+```bash
+python -m verification.runtime_health --hours 24
+```
+
+- 若需要人工比對原始 SQL，對應如下：
 
 ```sql
 SELECT final_action, COUNT(*) FROM decision_snapshots GROUP BY final_action;

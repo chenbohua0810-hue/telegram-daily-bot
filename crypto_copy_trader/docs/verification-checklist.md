@@ -14,9 +14,9 @@
 - [ ] Telegram 收到啟動通知
 - [ ] `data/events.jsonl` 有至少 1 筆事件寫入
 - [ ] 切換 `PAPER_TRADING=false` 前，仍需在真實環境手動跑一次 wallet scorer，確認 `addresses.db` 有 history 紀錄
+- [x] 已提供 `python -m verification.runtime_health --hours 24` 作為 runtime artifact summary 指令
 
 ## 24h Paper Trading SQL Health Checks
 
-- [ ] `SELECT final_action, COUNT(*) FROM decision_snapshots GROUP BY final_action;`
-- [ ] `SELECT skip_reason, COUNT(*) FROM decision_snapshots WHERE final_action='skip' GROUP BY skip_reason;`
-- [ ] `SELECT AVG(realized_slippage_pct), AVG(estimated_slippage_pct) FROM trades WHERE status='paper';`
+- [x] 已提供 `python -m verification.runtime_health --hours 24` 彙整上述三項查詢
+- [ ] 在真實 paper trading 跑滿 24 小時後，執行 `python -m verification.runtime_health --hours 24`

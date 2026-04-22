@@ -80,6 +80,7 @@ python -m crypto_copy_trader.main
 ```bash
 pytest
 pytest --cov
+python -m verification.runtime_health --hours 24
 ```
 
 詳細驗收步驟見 [docs/verification-checklist.md](docs/verification-checklist.md)。

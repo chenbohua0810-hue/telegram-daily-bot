@@ -17,6 +17,7 @@ source = [
     "monitors",
     "signals",
     "storage",
+    "verification",
     "wallet_scorer",
 ]
 branch = true
