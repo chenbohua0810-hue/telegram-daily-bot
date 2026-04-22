@@ -202,6 +202,7 @@ async def test_pipeline_happy_path_executes_trade(tmp_path, monkeypatch: pytest.
     assert len(snapshots) == 1
     assert snapshots[0].final_action == "buy"
     assert snapshots[0].trade_id is not None
+    assert snapshots[0].trade_id == trades[0]["id"]
 
 
 @pytest.mark.asyncio
@@ -225,6 +226,8 @@ async def test_pipeline_quant_filter_short_circuits_but_logs_snapshot(
     assert snapshots[0].technical is None
     assert snapshots[0].sentiment is None
     assert snapshots[0].ai_confidence is None
+    assert snapshots[0].risk is None
+    assert snapshots[0].cost is None
 
 
 @pytest.mark.asyncio

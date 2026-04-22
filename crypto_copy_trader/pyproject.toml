@@ -7,3 +7,20 @@ name = "crypto-copy-trader"
 version = "0.1.0"
 description = "Automated crypto copy trading pipeline."
 requires-python = ">=3.11"
+
+[tool.coverage.run]
+source = [
+    "analysis",
+    "config",
+    "execution",
+    "main",
+    "monitors",
+    "signals",
+    "storage",
+    "wallet_scorer",
+]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

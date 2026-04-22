@@ -79,7 +79,7 @@ python -m crypto_copy_trader.main
 
 ```bash
 pytest
-pytest --cov=crypto_copy_trader
+pytest --cov
 ```
 
 詳細驗收步驟見 [docs/verification-checklist.md](docs/verification-checklist.md)。

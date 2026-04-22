@@ -115,9 +115,15 @@ async def test_evaluate_all_persists_history(tmp_path) -> None:
     )
 
     results = await scorer.evaluate_all()
+    active_history = addresses_repo.get_history("0xactive", limit=5)
+    watch_history = addresses_repo.get_history("0xwatch", limit=5)
+    retired_history = addresses_repo.get_history("0xretired", limit=5)
 
     assert len(results) == 2
     assert append_history.call_count == 2
+    assert len(active_history) == 1
+    assert len(watch_history) == 1
+    assert retired_history == []
 
 
 @pytest.mark.asyncio
