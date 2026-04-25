@@ -1,0 +1,67 @@
+[
+  {
+    "address": "6i1ySwePEKUfE9BsCtFoKaD2uYd4BPLLLpZQ3kr4zKzC",
+    "chain": "sol",
+    "decision": "retired",
+    "reason": "unprofitable (pnl=$-2208, drawdown=100.00%)",
+    "metrics": {
+      "realized_pnl_usd": -2208.117078089732,
+      "sharpe_like": -0.9994021321507425,
+      "max_drawdown_ratio": 1.0,
+      "trade_count": 100,
+      "last_trade_days_ago": 22
+    }
+  },
+  {
+    "address": "973vghafz4fQYB3MquWdLZd8dBMzJWcsTyBxH2GAMqcY",
+    "chain": "sol",
+    "decision": "retired",
+    "reason": "unprofitable (pnl=$-0, drawdown=100.00%)",
+    "metrics": {
+      "realized_pnl_usd": -1.0798473226714123e-11,
+      "sharpe_like": -0.5937103232737572,
+      "max_drawdown_ratio": 1.0,
+      "trade_count": 100,
+      "last_trade_days_ago": 17
+    }
+  },
+  {
+    "address": "AGWFP3vwujS1ArGa6XAyaRtgxHaekzffwsn3ZQJb4uYw",
+    "chain": "sol",
+    "decision": "retired",
+    "reason": "unprofitable (pnl=$-1, drawdown=100.00%)",
+    "metrics": {
+      "realized_pnl_usd": -0.6648799837155169,
+      "sharpe_like": 0.0,
+      "max_drawdown_ratio": 1.0,
+      "trade_count": 100,
+      "last_trade_days_ago": 23
+    }
+  },
+  {
+    "address": "GFHMc9BegxJXLdHJrABxNVoPRdnmVxXiNeoUCEpgXVHw",
+    "chain": "sol",
+    "decision": "retired",
+    "reason": "unprofitable (pnl=$-140310, drawdown=100.00%)",
+    "metrics": {
+      "realized_pnl_usd": -140309.70133811314,
+      "sharpe_like": 0.0,
+      "max_drawdown_ratio": 1.0,
+      "trade_count": 100,
+      "last_trade_days_ago": 21
+    }
+  },
+  {
+    "address": "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa",
+    "chain": "sol",
+    "decision": "retired",
+    "reason": "unprofitable (pnl=$-0, drawdown=100.00%)",
+    "metrics": {
+      "realized_pnl_usd": -0.14085132624329333,
+      "sharpe_like": 0.0,
+      "max_drawdown_ratio": 1.0,
+      "trade_count": 100,
+      "last_trade_days_ago": 29
+    }
+  }
+]

@@ -1,0 +1,28 @@
+[
+  {
+    "address": "6i1ySwePEKUfE9BsCtFoKaD2uYd4BPLLLpZQ3kr4zKzC",
+    "chain": "sol",
+    "decision": "watch",
+    "reason": "activity thresholds not met (trades=100 diversity=15)",
+    "metrics": {
+      "realized_pnl_usd": 0.0,
+      "sharpe_like": 0.0,
+      "max_drawdown_ratio": 0.0,
+      "trade_count": 100,
+      "last_trade_days_ago": 22
+    }
+  },
+  {
+    "address": "973vghafz4fQYB3MquWdLZd8dBMzJWcsTyBxH2GAMqcY",
+    "chain": "sol",
+    "decision": "watch",
+    "reason": "activity thresholds not met (trades=100 diversity=21)",
+    "metrics": {
+      "realized_pnl_usd": 0.0,
+      "sharpe_like": 0.0,
+      "max_drawdown_ratio": 0.0,
+      "trade_count": 100,
+      "last_trade_days_ago": 17
+    }
+  }
+]

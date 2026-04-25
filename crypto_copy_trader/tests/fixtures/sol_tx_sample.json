@@ -1,0 +1,38 @@
+{
+  "success": true,
+  "data": [
+    {
+      "slot": 501,
+      "block_time": 1776772800,
+      "trans_id": "sol-in",
+      "from_address": "source",
+      "to_address": "sol-wallet",
+      "token_symbol": "SOL",
+      "amount": "1000000000",
+      "token_decimals": 9,
+      "transfer_type": "in"
+    },
+    {
+      "slot": 502,
+      "block_time": 1776772860,
+      "trans_id": "sol-out",
+      "from_address": "sol-wallet",
+      "to_address": "dest",
+      "token_symbol": "JUP",
+      "amount": "5000000",
+      "token_decimals": 6,
+      "transfer_type": "out"
+    },
+    {
+      "slot": 503,
+      "block_time": 1776772920,
+      "trans_id": "sol-bonk",
+      "from_address": "source",
+      "to_address": "sol-wallet",
+      "token_symbol": "BONK",
+      "amount": "1000000",
+      "token_decimals": 5,
+      "transfer_type": "in"
+    }
+  ]
+}

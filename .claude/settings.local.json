@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(python -c \":*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''agents/decision_agent.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(pip show:*)",
+      "Bash(pip3 show:*)",
+      "Bash(python3 -c \"import anthropic; print\\(anthropic.__version__\\)\")"
+    ]
+  }
+}
