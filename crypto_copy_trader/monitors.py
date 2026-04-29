@@ -388,9 +388,11 @@ class SolMonitor(ChainMonitor):
             payload = await self._request_transfers(address, from_time)
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (401, 403):
-                print(
-                    f"[SolMonitor] ⚠ API key unauthorised (HTTP {exc.response.status_code}) "
-                    f"for {address[:8]}... — set SOLSCAN_API_KEY to a Pro key for SOL monitoring"
+                logger.warning(
+                    "[SolMonitor] API key unauthorised (HTTP %d) for %s... — "
+                    "set SOLSCAN_API_KEY to a Pro key for SOL monitoring",
+                    exc.response.status_code,
+                    address[:8],
                 )
                 return []
             raise
@@ -451,6 +453,150 @@ class SolMonitor(ChainMonitor):
             return Decimal("0")
 
         price = await self._price_fetcher(symbol)
+        return amount_token * price
+
+
+_SOL_MINT = "So11111111111111111111111111111111111111112"
+_STABLECOINS = frozenset({"USDC", "USDT", "BUSD", "DAI", "USDS", "PYUSD", "FDUSD"})
+
+
+def _is_boring_token(symbol: str, address: str) -> bool:
+    return symbol in _STABLECOINS or address == _SOL_MINT
+
+
+class BirdeyeSolMonitor(ChainMonitor):
+    """SOL monitor backed by Birdeye public API — replaces Solscan Pro.
+
+    Note: ``since_block`` is interpreted as a unix timestamp (seconds),
+    not a Solana slot number, because Birdeye's seek_by_time endpoint
+    pages by ``after_time``. ``raw["slot"]`` therefore stores the
+    block_unix_time so ``_extract_block_marker`` continues to work.
+    """
+
+    chain = "sol"
+    _base_url = "https://public-api.birdeye.so/trader/txs/seek_by_time"
+
+    def __init__(
+        self,
+        api_key: str,
+        addresses_repo: AddressesRepo,
+        event_log: EventLog,
+        *,
+        price_fetcher: PriceFetcher,
+        binance_symbols: set[str],
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        super().__init__(api_key, addresses_repo, event_log, client=client)
+        self._price_fetcher = price_fetcher
+        self._binance_symbols = set(binance_symbols)
+
+    async def fetch_new_transactions(
+        self,
+        address: str,
+        since_block: int | None,
+    ) -> list[OnChainEvent]:
+        after_time = since_block
+        if after_time is None:
+            after_time = int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp())
+
+        try:
+            payload = await self._request_txs(address, after_time)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in (400, 401, 403, 429) or 500 <= status < 600:
+                logger.warning(
+                    "[BirdeyeSolMonitor] API error %d for %s...",
+                    status,
+                    address[:8],
+                )
+                return []
+            raise
+
+        items = (payload.get("data") or {}).get("items") or []
+        events: list[OnChainEvent] = []
+        for tx in items:
+            event = await self._parse_swap(tx, address)
+            if event is not None:
+                events.append(event)
+        return events
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_fixed(1),
+        retry=retry_if_exception_type(httpx.HTTPError),
+        reraise=True,
+    )
+    async def _request_txs(self, address: str, after_time: int) -> dict:
+        response = await self.client.get(
+            self._base_url,
+            params={"address": address, "tx_type": "swap", "limit": 50, "after_time": after_time},
+            headers={"X-API-KEY": self.api_key, "x-chain": "solana"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def _parse_swap(self, tx: dict, address: str) -> OnChainEvent | None:
+        ts = tx.get("block_unix_time") or 0
+        tx_hash = tx.get("tx_hash") or ""
+        if not tx_hash or not ts:
+            return None
+
+        base = tx.get("base") or {}
+        quote = tx.get("quote") or {}
+
+        base_dir = base.get("type_swap")
+        if base_dir == "from":
+            sent_side, recv_side = base, quote
+        elif base_dir == "to":
+            sent_side, recv_side = quote, base
+        else:
+            return None
+
+        sent_sym = str(sent_side.get("symbol") or "").upper()
+        recv_sym = str(recv_side.get("symbol") or "").upper()
+        sent_addr = sent_side.get("address") or ""
+        recv_addr = recv_side.get("address") or ""
+
+        recv_boring = _is_boring_token(recv_sym, recv_addr)
+        sent_boring = _is_boring_token(sent_sym, sent_addr)
+
+        if not recv_boring:
+            token_side, tx_type = recv_side, "swap_in"
+        elif not sent_boring:
+            token_side, tx_type = sent_side, "swap_out"
+        else:
+            return None
+
+        token_symbol = str(token_side.get("symbol") or "UNKNOWN").upper()
+        amount_token = Decimal(str(token_side.get("ui_amount") or 0))
+        amount_usd = await self._estimate_amount_usd(token_symbol, amount_token)
+
+        raw = dict(tx)
+        raw["slot"] = ts
+
+        return OnChainEvent(
+            chain=self.chain,
+            wallet=address,
+            tx_hash=tx_hash,
+            block_time=datetime.fromtimestamp(ts, tz=timezone.utc),
+            tx_type=tx_type,
+            token_symbol=token_symbol,
+            amount_token=amount_token,
+            amount_usd=amount_usd,
+            raw=raw,
+        )
+
+    async def _estimate_amount_usd(self, token_symbol: str, amount_token: Decimal) -> Decimal:
+        symbol = f"{token_symbol}/USDT"
+        if symbol not in self._binance_symbols:
+            return Decimal("0")
+        try:
+            price = await self._price_fetcher(symbol)
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "[BirdeyeSolMonitor] price fetch failed for %s: %s", symbol, exc
+            )
+            return Decimal("0")
         return amount_token * price
 
 

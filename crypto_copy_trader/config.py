@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     LLM_SECONDARY_API_KEY: str | None = None
 
     ETHERSCAN_API_KEY: str
-    SOLSCAN_API_KEY: str
+    SOLSCAN_API_KEY: str = ""
+    BIRDEYE_API_KEY: str = ""
     BSCSCAN_API_KEY: str = ""
 
     CRYPTOPANIC_API_KEY: str = ""

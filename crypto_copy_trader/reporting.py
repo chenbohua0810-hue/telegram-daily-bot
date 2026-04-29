@@ -159,6 +159,17 @@ class TelegramNotifier:
             escaped = escaped.replace(char, f"\\{char}")
         return escaped
 
+    async def aclose(self) -> None:
+        if self.bot is None:
+            return
+        shutdown = getattr(self.bot, "shutdown", None)
+        if shutdown is None:
+            return
+        try:
+            await shutdown()
+        except Exception:
+            _logger.warning("Telegram bot shutdown failed", exc_info=True)
+
 
 # ---------------------------------------------------------------------------
 # trade_logger

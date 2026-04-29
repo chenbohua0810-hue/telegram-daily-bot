@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -10,17 +11,21 @@ from typing import Any, Callable
 import anthropic
 import ccxt.async_support as ccxt
 import httpx
+from telegram import Bot
 
 from config import get_settings
 from execution import BinanceExecutor, compute_position_size, check_risk
 from models import DecisionSnapshot, OnChainEvent, TradeDecision
-from monitors import BscMonitor, BscWebSocketMonitor, EthMonitor, EthWebSocketMonitor, SolMonitor, SolWebSocketMonitor
+from monitors import BirdeyeSolMonitor, BscMonitor, BscWebSocketMonitor, EthMonitor, EthWebSocketMonitor, SolMonitor, SolWebSocketMonitor
 from reporting import PerformanceTracker, TelegramNotifier, TradeLogger
 from signals.filters import compute_sentiment, compute_technicals, estimate_cost, ohlcv_to_volatility, quant_filter, should_reject
 from signals.router import AnthropicBackend, FallbackBackend, LLMBackendError, OpenAICompatBackend, assign_priority
 from signals.scorer import AIScore, AIScorerError, BatchScorer, PROMPT_SYSTEM, score_signal
 from storage import AddressesRepo, EventLog, TradesRepo, init_addresses_db, init_trades_db
 from wallet_scorer import WalletScorer
+
+
+logger = logging.getLogger(__name__)
 
 
 CorrelationProvider = Callable[[str, list[str]], dict[str, float]]
@@ -248,7 +253,11 @@ async def build_runtime() -> Runtime:
     )
     binance_symbols = await executor.load_markets()
 
-    notifier = TelegramNotifier(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID)
+    notifier = TelegramNotifier(
+        settings.TELEGRAM_BOT_TOKEN,
+        settings.TELEGRAM_CHAT_ID,
+        bot=Bot(token=settings.TELEGRAM_BOT_TOKEN),
+    )
     tracker = PerformanceTracker(trades_repo)
     trade_logger = TradeLogger(trades_repo)
     anthropic_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -316,14 +325,18 @@ async def build_runtime() -> Runtime:
         binance_symbols=binance_symbols,
         client=shared_http,
     )
-    sol_rest = SolMonitor(
-        settings.SOLSCAN_API_KEY,
-        addresses_repo,
-        event_log,
-        price_fetcher=executor.fetch_price,
-        binance_symbols=binance_symbols,
-        client=shared_http,
-    )
+    if settings.BIRDEYE_API_KEY:
+        sol_rest = BirdeyeSolMonitor(
+            settings.BIRDEYE_API_KEY,
+            addresses_repo,
+            event_log,
+            price_fetcher=executor.fetch_price,
+            binance_symbols=binance_symbols,
+            client=shared_http,
+        )
+    else:
+        sol_rest = None
+        logger.warning("BIRDEYE_API_KEY not set — SOL monitoring disabled")
     bsc_rest = (
         BscMonitor(
             settings.BSCSCAN_API_KEY,
@@ -345,13 +358,16 @@ async def build_runtime() -> Runtime:
                 heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
                 reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
             ),
-            SolWebSocketMonitor(
-                rest_monitor=sol_rest,
-                ws_url=settings.SOL_WSS_URL,
-                heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
-                reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
-            ),
         ]
+        if sol_rest is not None:
+            monitors.append(
+                SolWebSocketMonitor(
+                    rest_monitor=sol_rest,
+                    ws_url=settings.SOL_WSS_URL,
+                    heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
+                    reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
+                )
+            )
         if bsc_rest is not None:
             monitors.append(
                 BscWebSocketMonitor(
@@ -404,6 +420,9 @@ async def main() -> None:
         await runtime.deps.batch_scorer.flush()
         await runtime.deps.http.aclose()
         await runtime.deps.executor.exchange.close()
+        notifier_close = getattr(runtime.deps.notifier, "aclose", None)
+        if notifier_close is not None:
+            await notifier_close()
 
 
 async def _read_websocket_events_once(
