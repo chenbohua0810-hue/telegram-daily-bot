@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -10,6 +11,7 @@ from typing import Any, Callable
 import anthropic
 import ccxt.async_support as ccxt
 import httpx
+from telegram import Bot
 
 from analysis.performance_tracker import PerformanceTracker
 from analysis.telegram_notifier import TelegramNotifier
@@ -44,6 +46,12 @@ from storage.event_log import EventLog
 from storage.trades_repo import TradesRepo
 from wallet_scorer.scorer import WalletScorer
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 CorrelationProvider = Callable[[str, list[str]], dict[str, float]]
 
@@ -270,7 +278,12 @@ async def build_runtime() -> Runtime:
     )
     binance_symbols = await executor.load_markets()
 
-    notifier = TelegramNotifier(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID)
+    notifier = TelegramNotifier(
+        settings.TELEGRAM_BOT_TOKEN,
+        settings.TELEGRAM_CHAT_ID,
+        bot=Bot(token=settings.TELEGRAM_BOT_TOKEN),
+    )
+    await notifier.initialize()
     tracker = PerformanceTracker(trades_repo)
     trade_logger = TradeLogger(trades_repo)
     anthropic_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)

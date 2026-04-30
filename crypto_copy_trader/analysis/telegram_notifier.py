@@ -62,6 +62,25 @@ class TelegramNotifier:
         except Exception:
             logger.error("Telegram notification failed", exc_info=True)
 
+    async def initialize(self) -> None:
+        if self.bot is None:
+            return
+        try:
+            await self.bot.initialize()
+        except Exception:
+            logger.warning("Telegram bot initialize failed", exc_info=True)
+
+    async def aclose(self) -> None:
+        if self.bot is None:
+            return
+        shutdown = getattr(self.bot, "shutdown", None)
+        if shutdown is None:
+            return
+        try:
+            await shutdown()
+        except Exception:
+            logger.warning("Telegram bot shutdown failed", exc_info=True)
+
     def _escape(self, value: str) -> str:
         escaped = value
         for char in MARKDOWN_V2_SPECIALS:
