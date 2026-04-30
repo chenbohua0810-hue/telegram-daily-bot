@@ -262,6 +262,7 @@ async def build_runtime() -> Runtime:
         settings.TELEGRAM_CHAT_ID,
         bot=Bot(token=settings.TELEGRAM_BOT_TOKEN),
     )
+    await notifier.initialize()
     tracker = PerformanceTracker(trades_repo)
     trade_logger = TradeLogger(trades_repo)
     anthropic_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)

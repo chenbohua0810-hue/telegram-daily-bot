@@ -159,6 +159,14 @@ class TelegramNotifier:
             escaped = escaped.replace(char, f"\\{char}")
         return escaped
 
+    async def initialize(self) -> None:
+        if self.bot is None:
+            return
+        try:
+            await self.bot.initialize()
+        except Exception:
+            _logger.warning("Telegram bot initialize failed", exc_info=True)
+
     async def aclose(self) -> None:
         if self.bot is None:
             return
