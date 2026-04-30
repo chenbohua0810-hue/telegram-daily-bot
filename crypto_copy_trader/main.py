@@ -25,6 +25,10 @@ from storage import AddressesRepo, EventLog, TradesRepo, init_addresses_db, init
 from wallet_scorer import WalletScorer
 
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 
