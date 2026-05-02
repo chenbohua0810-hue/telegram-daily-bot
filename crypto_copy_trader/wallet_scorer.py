@@ -66,6 +66,10 @@ class WalletScorer:
         weekly_win_rate = self._bounded_ratio(
             recent_performance.get("weekly_win_rate", recent_win_rate)
         )
+        mev_suspect_count = max(0, int(recent_performance.get("mev_suspect_count", 0)))
+        binance_listable_pnl_180d = self._non_negative_float(
+            recent_performance.get("binance_listable_pnl_180d", wallet.binance_listable_pnl_180d)
+        )
 
         weighted_win_rate = round(((wallet.win_rate * 1.0) + (recent_win_rate * 2.0)) / 3.0, 4)
         trust_level = classify_trust_level(weighted_win_rate, wallet.trade_count, max_drawdown)
@@ -73,7 +77,11 @@ class WalletScorer:
         status: WalletStatus = "active"
         warnings: list[str] = []
 
-        if max_drawdown > 0.40 or current_funds_usd < wallet.funds_usd * 0.5:
+        if mev_suspect_count >= 3:
+            decision = "retire"
+            status = "retired"
+            trust_level = "low"
+        elif max_drawdown > 0.40 or current_funds_usd < wallet.funds_usd * 0.5:
             decision = "retire"
             status = "retired"
             trust_level = "low"
@@ -93,6 +101,7 @@ class WalletScorer:
             funds_usd=current_funds_usd,
             trust_level=trust_level,
             status=status,
+            binance_listable_pnl_180d=binance_listable_pnl_180d,
         )
         reasoning = await self._build_reasoning(
             wallet=wallet,
@@ -102,6 +111,7 @@ class WalletScorer:
             weekly_win_rate=weekly_win_rate,
             weekly_trades=weekly_trades,
             warnings=warnings,
+            mev_suspect_count=mev_suspect_count,
         )
         return EvaluationResult(
             address=wallet.address,
@@ -143,6 +153,7 @@ class WalletScorer:
         weekly_win_rate: float,
         weekly_trades: int,
         warnings: list[str],
+        mev_suspect_count: int = 0,
     ) -> str:
         prompt_payload = {
             "address": wallet.address,
@@ -154,6 +165,7 @@ class WalletScorer:
                 "funds_usd": wallet.funds_usd,
                 "trust_level": wallet.trust_level,
                 "status": wallet.status,
+                "binance_listable_pnl_180d": wallet.binance_listable_pnl_180d,
             },
             "new_score": {
                 "win_rate": new_score.win_rate,
@@ -162,18 +174,21 @@ class WalletScorer:
                 "funds_usd": new_score.funds_usd,
                 "trust_level": new_score.trust_level,
                 "status": new_score.status,
+                "binance_listable_pnl_180d": new_score.binance_listable_pnl_180d,
             },
             "rules": {
                 "retire_on_max_drawdown_gt_40pct": True,
                 "watch_on_3_consecutive_losses": True,
                 "warn_on_weekly_win_rate_lt_40pct_with_5_trades": True,
                 "retire_on_funds_drop_50pct": True,
+                "retire_on_3_mev_suspicions": True,
             },
             "signals": {
                 "consecutive_losses": consecutive_losses,
                 "weekly_win_rate": weekly_win_rate,
                 "weekly_trades": weekly_trades,
                 "warnings": warnings,
+                "mev_suspect_count": mev_suspect_count,
             },
         }
 

@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS wallets (
     trust_level TEXT NOT NULL CHECK (trust_level IN ('high','medium','low')),
     status TEXT NOT NULL CHECK (status IN ('active','watch','retired')),
     added_at TEXT NOT NULL,
-    last_evaluated_at TEXT NOT NULL
+    last_evaluated_at TEXT NOT NULL,
+    binance_listable_pnl_180d REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS wallet_history (
@@ -171,6 +172,7 @@ def init_addresses_db(db_path: str) -> None:
 
     try:
         connection.executescript(ADDRESSES_SCHEMA)
+        _ensure_column(connection, "wallets", "binance_listable_pnl_180d", "REAL NOT NULL DEFAULT 0")
         connection.commit()
     finally:
         connection.close()
@@ -196,6 +198,12 @@ def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name:
         return
     connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    index = min(len(values) - 1, max(0, int(round((len(values) - 1) * pct))))
+    return float(values[index])
 
 # ---------------------------------------------------------------------------
 # event_log
@@ -266,8 +274,8 @@ class AddressesRepo:
                 INSERT INTO wallets (
                     address, chain, win_rate, trade_count, max_drawdown,
                     funds_usd, recent_win_rate, trust_level, status,
-                    added_at, last_evaluated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    added_at, last_evaluated_at, binance_listable_pnl_180d
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(address) DO UPDATE SET
                     chain = excluded.chain,
                     win_rate = excluded.win_rate,
@@ -277,7 +285,8 @@ class AddressesRepo:
                     recent_win_rate = excluded.recent_win_rate,
                     trust_level = excluded.trust_level,
                     status = excluded.status,
-                    last_evaluated_at = excluded.last_evaluated_at
+                    last_evaluated_at = excluded.last_evaluated_at,
+                    binance_listable_pnl_180d = excluded.binance_listable_pnl_180d
                 """,
                 (
                     score.address,
@@ -291,6 +300,7 @@ class AddressesRepo:
                     score.status,
                     added_at,
                     timestamp,
+                    score.binance_listable_pnl_180d,
                 ),
             )
             connection.commit()
@@ -432,6 +442,7 @@ class AddressesRepo:
             recent_win_rate=row["recent_win_rate"],
             trust_level=row["trust_level"],
             status=row["status"],
+            binance_listable_pnl_180d=float(row["binance_listable_pnl_180d"] or 0.0),
         )
 
 
@@ -651,6 +662,50 @@ class TradesRepo:
             connection.close()
 
         return [dict(row) for row in rows]
+
+
+    def get_per_wallet_pnl(self, days: int) -> list[dict]:
+        trades = self.recent_trades(hours=days * 24)
+        aggregates: dict[str, dict[str, float | int | str]] = {}
+        for trade in trades:
+            wallet = str(trade["source_wallet"])
+            mid_price = float(trade.get("pre_trade_mid_price") or trade.get("price") or 0.0)
+            price = float(trade.get("price") or 0.0)
+            quantity = float(trade.get("quantity") or 0.0)
+            fee = float(trade.get("fee_usdt") or 0.0)
+            direction = 1.0 if trade.get("action") == "buy" else -1.0
+            pnl = ((price - mid_price) * quantity * direction) - fee
+            current = aggregates.get(wallet, {"source_wallet": wallet, "pnl_usdt": 0.0, "trades": 0, "wins": 0})
+            next_pnl = float(current["pnl_usdt"]) + pnl
+            aggregates[wallet] = {
+                **current,
+                "pnl_usdt": next_pnl,
+                "trades": int(current["trades"]) + 1,
+                "wins": int(current["wins"]) + (1 if pnl > 0 else 0),
+            }
+        return sorted(
+            (
+                {
+                    **row,
+                    "win_rate": 0.0 if int(row["trades"]) == 0 else round(int(row["wins"]) / int(row["trades"]), 4),
+                }
+                for row in aggregates.values()
+            ),
+            key=lambda row: float(row["pnl_usdt"]),
+            reverse=True,
+        )
+
+    def get_mirror_lag_distribution(self, days: int) -> dict[str, float]:
+        snapshots = self.get_snapshots(since=_utc_now() - timedelta(days=days), limit=10000)
+        lags = [
+            max(0.0, (snapshot.recorded_at - datetime.fromisoformat(snapshot.event_tx_hash.split("@", maxsplit=1)[1])).total_seconds())
+            for snapshot in snapshots
+            if "@" in snapshot.event_tx_hash
+        ]
+        if not lags:
+            return {"p50": 0.0, "p95": 0.0}
+        ordered = sorted(lags)
+        return {"p50": _percentile(ordered, 0.50), "p95": _percentile(ordered, 0.95)}
 
     def get_traded_symbols(self) -> set[str]:
         connection = get_connection(self._db_path)

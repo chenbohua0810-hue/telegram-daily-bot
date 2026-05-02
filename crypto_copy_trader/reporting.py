@@ -90,6 +90,143 @@ class PerformanceTracker:
         return (float(trade["price"]) - mid_price) / mid_price
 
 
+
+@dataclass
+class TradingControlState:
+    is_paused: bool = False
+    stop_loss_overrides: dict[str, float] | None = None
+
+    def pause(self) -> "TradingControlState":
+        self.is_paused = True
+        return self
+
+    def resume(self) -> "TradingControlState":
+        self.is_paused = False
+        return self
+
+
+class TelegramCommandController:
+    def __init__(self, *, chat_id: str, control_state: TradingControlState, executor: Any, trades_repo: Any, notifier: Any) -> None:
+        self.chat_id = str(chat_id)
+        self.control_state = control_state
+        self.executor = executor
+        self.trades_repo = trades_repo
+        self.notifier = notifier
+
+    def _authorized(self, update: Any) -> bool:
+        chat = getattr(update, "effective_chat", None)
+        return chat is not None and str(getattr(chat, "id", "")) == self.chat_id
+
+    async def handle_pause(self, update: Any, context: Any) -> None:
+        if not self._authorized(update):
+            return
+        self.control_state.pause()
+        await update.message.reply_text("paused")
+
+    async def handle_resume(self, update: Any, context: Any) -> None:
+        if not self._authorized(update):
+            return
+        self.control_state.resume()
+        await update.message.reply_text("resumed")
+
+    async def handle_status(self, update: Any, context: Any) -> None:
+        if not self._authorized(update):
+            return
+        positions = self.trades_repo.get_positions() if hasattr(self.trades_repo, "get_positions") else []
+        await update.message.reply_text(f"paused={self.control_state.is_paused} positions={len(positions)}")
+
+    async def handle_close(self, update: Any, context: Any) -> None:
+        if not self._authorized(update):
+            return
+        symbol = (getattr(context, "args", []) or [""])[0]
+        positions = self.trades_repo.get_positions() if hasattr(self.trades_repo, "get_positions") else []
+        position = next((item for item in positions if item.symbol == symbol), None)
+        if position is None:
+            await update.message.reply_text("position not found")
+            return
+        await self.executor.execute_exit(symbol, Decimal("1"), position=position, source_wallet=position.source_wallet, reason="manual_close")
+        await update.message.reply_text(f"close submitted {symbol}")
+
+    async def handle_closeall(self, update: Any, context: Any) -> None:
+        if not self._authorized(update):
+            return
+        positions = self.trades_repo.get_positions() if hasattr(self.trades_repo, "get_positions") else []
+        for position in positions:
+            await self.executor.execute_exit(position.symbol, Decimal("1"), position=position, source_wallet=position.source_wallet, reason="manual_closeall")
+        await update.message.reply_text(f"closeall submitted {len(positions)}")
+
+    async def handle_sl(self, update: Any, context: Any) -> None:
+        if not self._authorized(update):
+            return
+        args = getattr(context, "args", []) or []
+        if len(args) != 2:
+            await update.message.reply_text("usage: /sl <symbol> <pct>")
+            return
+        try:
+            pct = float(args[1])
+        except ValueError:
+            await update.message.reply_text("pct must be numeric")
+            return
+        overrides = {**(self.control_state.stop_loss_overrides or {}), args[0]: pct}
+        self.control_state.stop_loss_overrides = overrides
+        await update.message.reply_text(f"stop loss updated {args[0]}")
+
+
+def _fmt_usd(value: Decimal | float | int) -> str:
+    return f"${float(value):,.0f}"
+
+
+def _short_wallet(address: str) -> str:
+    return address if len(address) <= 10 else f"{address[:6]}...{address[-4:]}"
+
+
+def build_daily_report(
+    *,
+    date: str,
+    portfolio_value: Decimal,
+    portfolio_delta_pct: float,
+    portfolio_7d_delta_pct: float,
+    trades_repo: Any,
+    health: dict[str, float | int],
+) -> str:
+    daily = trades_repo.get_daily_pnl(date) if hasattr(trades_repo, "get_daily_pnl") else None
+    realized = Decimal(str((daily or {}).get("realized_pnl_usdt", 0)))
+    unrealized = Decimal(str((daily or {}).get("unrealized_pnl_usdt", 0)))
+    trades = trades_repo.recent_trades(hours=24) if hasattr(trades_repo, "recent_trades") else []
+    wins = [trade for trade in trades if float(trade.get("price") or 0) > float(trade.get("pre_trade_mid_price") or trade.get("price") or 0)]
+    hit_rate = 0.0 if not trades else len(wins) / len(trades)
+    positions = trades_repo.get_positions() if hasattr(trades_repo, "get_positions") else []
+    wallet_rows = trades_repo.get_per_wallet_pnl(days=30) if hasattr(trades_repo, "get_per_wallet_pnl") else []
+    top = wallet_rows[:3]
+    bottom = list(reversed(wallet_rows[-3:])) if len(wallet_rows) > 3 else [row for row in wallet_rows if float(row.get("pnl_usdt", 0)) < 0]
+    lag = trades_repo.get_mirror_lag_distribution(days=30) if hasattr(trades_repo, "get_mirror_lag_distribution") else {"p50": 0.0, "p95": 0.0}
+
+    def wallet_line(index: int, row: dict) -> str:
+        pnl = float(row.get("pnl_usdt", 0.0))
+        sign = "+" if pnl >= 0 else ""
+        return f"  {index}. {_short_wallet(str(row.get('source_wallet', 'unknown')))} {sign}${pnl:,.0f} ({int(row.get('trades', 0))} trades, win {float(row.get('win_rate', 0.0)):.0%})"
+
+    top_lines = [wallet_line(index + 1, row) for index, row in enumerate(top)] or ["  - none"]
+    bottom_lines = [wallet_line(index + 1, row) for index, row in enumerate(bottom)] or ["  - none"]
+    return "\n".join([
+        f"📊 Daily Report ({date})",
+        "━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"💰 Portfolio: {_fmt_usd(portfolio_value)} (Δ {portfolio_delta_pct:+.2%} / 7d {portfolio_7d_delta_pct:+.2%})",
+        f"📈 Realized PnL: {_fmt_usd(realized)} ({len(trades)} trades)",
+        f"📉 Open positions: {len(positions)} (unrealized {_fmt_usd(unrealized)})",
+        "",
+        f"🎯 Hit rate: {hit_rate:.0%} (last {min(len(trades), 30)} trades)",
+        f"⚡ Avg mirror lag: {lag.get('p50', 0.0):.0f}s (p50) / {lag.get('p95', 0.0):.0f}s (p95)",
+        f"💸 Avg cost per round-trip: {float(health.get('avg_cost_bps', 0.0)):.0f} bps",
+        "",
+        "🏆 Top 3 wallets (30d PnL):",
+        *top_lines,
+        "🔻 Bottom 3 wallets (30d PnL):",
+        *bottom_lines,
+        "",
+        f"🚦 Health: WS uptime {float(health.get('ws_uptime_pct', 0.0)):.1f}%, LLM fallback rate {float(health.get('llm_fallback_rate', 0.0)):.1%}, API rate-limit hits {int(health.get('api_rate_limit_hits', 0))}",
+    ])
+
 # ---------------------------------------------------------------------------
 # telegram_notifier
 # ---------------------------------------------------------------------------
@@ -140,6 +277,45 @@ class TelegramNotifier:
             f"PnL: `{pnl_pct:.2%}`"
         )
         await self._send(text)
+
+
+    def start_command_listener(self, *, control_state: TradingControlState, executor: Any, trades_repo: Any) -> TelegramCommandController | None:
+        controller = TelegramCommandController(
+            chat_id=self.chat_id,
+            control_state=control_state,
+            executor=executor,
+            trades_repo=trades_repo,
+            notifier=self,
+        )
+        try:
+            from telegram.ext import Application, CommandHandler
+        except Exception:
+            return controller
+        application = Application.builder().token(self.bot_token).build()
+        application.add_handler(CommandHandler("pause", controller.handle_pause))
+        application.add_handler(CommandHandler("resume", controller.handle_resume))
+        application.add_handler(CommandHandler("status", controller.handle_status))
+        application.add_handler(CommandHandler("close", controller.handle_close))
+        application.add_handler(CommandHandler("closeall", controller.handle_closeall))
+        application.add_handler(CommandHandler("sl", controller.handle_sl))
+        self.command_application = application
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._start_command_application(application))
+        except RuntimeError:
+            pass
+        return controller
+
+    async def _start_command_application(self, application: Any) -> None:
+        try:
+            await application.initialize()
+            await application.start()
+            updater = getattr(application, "updater", None)
+            if updater is not None:
+                await updater.start_polling()
+        except Exception:
+            _logger.warning("Telegram command listener failed to start", exc_info=True)
 
     async def _send(self, text: str) -> None:
         if self.bot is None:

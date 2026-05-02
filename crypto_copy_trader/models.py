@@ -27,6 +27,7 @@ class OnChainEvent:
     amount_usd: Decimal
     raw: dict[str, Any]
     token_address: str
+    is_mev_suspect: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class OnChainEvent:
             "amount_token": str(self.amount_token),
             "amount_usd": str(self.amount_usd),
             "raw": self.raw,
+            "is_mev_suspect": self.is_mev_suspect,
         }
 
     @classmethod
@@ -55,6 +57,7 @@ class OnChainEvent:
             amount_usd=Decimal(payload["amount_usd"]),
             raw=payload["raw"],
             token_address=payload["token_address"],
+            is_mev_suspect=bool(payload.get("is_mev_suspect", False)),
         )
 
 
@@ -202,6 +205,7 @@ class WalletScore:
     recent_win_rate: float
     trust_level: TrustLevel
     status: WalletStatus
+    binance_listable_pnl_180d: float = 0.0
 
     def __post_init__(self) -> None:
         _validate_choice(self.chain, "chain", CHAIN_VALUES)
@@ -212,6 +216,7 @@ class WalletScore:
         _validate_ratio(self.recent_win_rate, "recent_win_rate")
         _validate_non_negative(self.trade_count, "trade_count")
         _validate_non_negative(self.funds_usd, "funds_usd")
+        _validate_non_negative(self.binance_listable_pnl_180d, "binance_listable_pnl_180d")
 
 
 # ---------------------------------------------------------------------------

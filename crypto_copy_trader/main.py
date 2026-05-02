@@ -18,12 +18,13 @@ from config import get_settings
 from execution import BinanceExecutor, compute_position_size, check_risk, position_stop_check
 from models import DecisionSnapshot, OnChainEvent, TradeDecision
 from monitors import BirdeyeSolMonitor, BscMonitor, BscWebSocketMonitor, EthMonitor, EthWebSocketMonitor, SolMonitor, SolWebSocketMonitor
-from reporting import PerformanceTracker, TelegramNotifier, TradeLogger
+from reporting import PerformanceTracker, TelegramNotifier, TradeLogger, TradingControlState, build_daily_report
 from signals.exit_router import should_mirror_exit
 from signals.filters import compute_sentiment, compute_technicals, estimate_cost, ohlcv_to_volatility, quant_filter, should_reject
 from signals.router import AnthropicBackend, FallbackBackend, LLMBackendError, OpenAICompatBackend, assign_priority
 from signals.scorer import AIScore, AIScorerError, BatchScorer, PROMPT_SYSTEM, score_signal
 from signals.symbol_mapper import map_to_binance
+from signals.mev_detector import check_mev_event
 from storage import AddressesRepo, EventLog, TradesRepo, init_addresses_db, init_trades_db
 from wallet_scorer import WalletScorer
 
@@ -55,6 +56,7 @@ class PipelineDeps:
     recent_events_cache: list[OnChainEvent]
     btc_24h_vol_pct: float
     correlation_provider: CorrelationProvider
+    control_state: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,14 @@ async def process_event(
     daily_pnl: float,
     deps: PipelineDeps,
 ) -> None:
+    event = check_mev_event(event, recent_events=deps.recent_events_cache)
+    control_state = getattr(deps, "control_state", None)
+    if event.tx_type == "swap_in" and getattr(control_state, "is_paused", False):
+        symbol = map_to_binance(event.chain, event.token_address, event.token_symbol) or f"{event.token_symbol}/USDT"
+        return _log_skip(event, "manual_pause", _new_snapshot_builder(event, symbol), deps)
+    if event.is_mev_suspect:
+        symbol = map_to_binance(event.chain, event.token_address, event.token_symbol) or f"{event.token_symbol}/USDT"
+        return _log_skip(event, "mev_suspect", _new_snapshot_builder(event, symbol), deps)
     if event.tx_type == "swap_out":
         await _process_exit_event(event, portfolio, deps)
         _append_recent_event(deps.recent_events_cache, event)
@@ -412,12 +422,20 @@ async def daily_summary_loop(tracker: PerformanceTracker, trades_repo: TradesRep
         ]
         win_rate = 0.0 if not trades else len(win_trades) / len(trades)
         today = datetime.now(timezone.utc).date().isoformat()
-        await notifier.notify_daily_summary(
-            today,
-            total_trades=len(trades),
-            win_rate=win_rate,
-            pnl_pct=tracker.daily_pnl_pct(today),
+        report = build_daily_report(
+            date=today,
+            portfolio_value=Decimal(str((trades_repo.get_daily_pnl(today) or {}).get("starting_equity_usdt", 0))),
+            portfolio_delta_pct=tracker.daily_pnl_pct(today),
+            portfolio_7d_delta_pct=0.0,
+            trades_repo=trades_repo,
+            health={"ws_uptime_pct": 0.0, "llm_fallback_rate": 0.0, "api_rate_limit_hits": 0},
         )
+        send = getattr(notifier, "_send", None)
+        if send is not None:
+            escape = getattr(notifier, "_escape", lambda value: value)
+            await send(escape(report))
+        else:
+            await notifier.notify_daily_summary(today, total_trades=len(trades), win_rate=win_rate, pnl_pct=tracker.daily_pnl_pct(today))
 
 
 async def build_runtime() -> Runtime:
@@ -453,6 +471,7 @@ async def build_runtime() -> Runtime:
         bot=Bot(token=settings.TELEGRAM_BOT_TOKEN),
     )
     await notifier.initialize()
+    control_state = TradingControlState()
     tracker = PerformanceTracker(trades_repo)
     trade_logger = TradeLogger(trades_repo)
     anthropic_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -511,6 +530,7 @@ async def build_runtime() -> Runtime:
         recent_events_cache=[],
         btc_24h_vol_pct=btc_24h_vol_pct,
         correlation_provider=lambda new_symbol, existing_symbols: {},
+        control_state=control_state,
     )
     eth_rest = EthMonitor(
         settings.ETHERSCAN_API_KEY,
@@ -574,6 +594,7 @@ async def build_runtime() -> Runtime:
             )
     else:
         monitors = rest_monitors
+    notifier.start_command_listener(control_state=control_state, executor=executor, trades_repo=trades_repo)
     return Runtime(deps=deps, tracker=tracker, wallet_scorer=wallet_scorer, monitors=monitors)
 
 

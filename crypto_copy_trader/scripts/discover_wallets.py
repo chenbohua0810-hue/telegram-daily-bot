@@ -98,6 +98,9 @@ class Candidate:
     max_drawdown: Optional[float]     # None = not provided by source
     recent_win_rate: Optional[float]  # None = not provided by source
     source: str
+    primary_binance_symbol: str | None = None
+    binance_listable_pnl_180d: float = 0.0
+    non_binance_trade_ratio: float = 0.0
 
 
 def _utc_now_ts() -> str:
@@ -159,6 +162,9 @@ def normalize_gmgn_sol(rows: list[dict]) -> list[Candidate]:
                 max_drawdown=None,
                 recent_win_rate=None,
                 source="gmgn-sol",
+                primary_binance_symbol=_extract_symbol(row),
+                binance_listable_pnl_180d=float(row.get("binance_listable_pnl_180d") or row.get("binance_pnl_180d") or row.get("realized_pnl_usd") or 0),
+                non_binance_trade_ratio=float(row.get("non_binance_trade_ratio") or row.get("non_listable_trade_ratio") or 0),
             ))
         except (KeyError, TypeError, ValueError) as exc:
             print(f"[gmgn-sol] normalize skip: {exc}")
@@ -198,6 +204,9 @@ def normalize_birdeye_sol(rows: list[dict]) -> list[Candidate]:
                 max_drawdown=None,      # not provided
                 recent_win_rate=None,
                 source="birdeye-sol",
+                primary_binance_symbol=_extract_symbol(row),
+                binance_listable_pnl_180d=float(row.get("binance_listable_pnl_180d") or row.get("pnl") or row.get("realizedPnl") or 0),
+                non_binance_trade_ratio=float(row.get("non_binance_trade_ratio") or row.get("non_listable_trade_ratio") or 0),
             ))
         except (KeyError, TypeError, ValueError) as exc:
             print(f"[birdeye-sol] normalize skip: {exc}")
@@ -292,11 +301,54 @@ def normalize_dune_csv(rows: list[dict]) -> list[Candidate]:
                 max_drawdown=float(row.get("max_drawdown") or 0) if row.get("max_drawdown") not in (None, "") else None,
                 recent_win_rate=None,
                 source="dune-csv-eth",
+                primary_binance_symbol=_extract_symbol(row),
+                binance_listable_pnl_180d=float(row.get("binance_listable_pnl_180d") or row.get("binance_pnl_180d") or row.get("realized_pnl_usd") or 0),
+                non_binance_trade_ratio=float(row.get("non_binance_trade_ratio") or row.get("non_listable_trade_ratio") or 0),
             ))
         except (KeyError, TypeError, ValueError) as exc:
             print(f"[dune-csv-eth] normalize skip: {exc}")
     return result
 
+
+
+def _extract_symbol(row: dict) -> str | None:
+    raw = row.get("binance_symbol") or row.get("symbol") or row.get("token_symbol")
+    if raw in (None, ""):
+        return None
+    symbol = str(raw).upper()
+    return symbol if "/" in symbol else f"{symbol}/USDT"
+
+
+def load_binance_symbols(path: str) -> set[str]:
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if isinstance(payload, list):
+        return {str(item).upper() for item in payload}
+    if isinstance(payload, dict):
+        raw_symbols = payload.get("symbols") or payload.get("binance_symbols") or []
+        return {str(item).upper() for item in raw_symbols}
+    raise ValueError("binance symbols file must contain a list or object")
+
+
+def apply_binance_listable_filter(
+    candidates: list[Candidate],
+    symbols_path: str,
+    *,
+    min_pnl_usd: float = 30_000.0,
+    max_non_binance_trade_ratio: float = 0.80,
+) -> list[Candidate]:
+    symbols = load_binance_symbols(symbols_path)
+    result: list[Candidate] = []
+    for candidate in candidates:
+        symbol = candidate.primary_binance_symbol
+        if symbol is None or symbol.upper() not in symbols:
+            continue
+        if candidate.binance_listable_pnl_180d < min_pnl_usd:
+            continue
+        if candidate.chain == "sol" and candidate.non_binance_trade_ratio >= max_non_binance_trade_ratio:
+            continue
+        result.append(candidate)
+    return result
 
 def apply_blocklist(candidates: list[Candidate], chain: str) -> list[Candidate]:
     bl = BLOCKLIST_SOL if chain == "sol" else BLOCKLIST_ETH
@@ -350,6 +402,7 @@ def to_wallet_score(c: Candidate) -> WalletScore:
         recent_win_rate=recent_wr,
         trust_level=trust,
         status="watch",
+        binance_listable_pnl_180d=c.binance_listable_pnl_180d,
     )
 
 
@@ -399,6 +452,8 @@ def _run_source(source: str, args: argparse.Namespace, ts: str, repo: AddressesR
         raise
 
     candidates = apply_blocklist(candidates, chain)
+    if getattr(args, "binance_listable_only", False):
+        candidates = apply_binance_listable_filter(candidates, args.binance_symbols)
     filtered = apply_filters(candidates)
     print(f"[{source}] filters: {len(filtered)} passed / {len(candidates)} evaluated")
 
@@ -461,4 +516,8 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-enrich", action="store_true",
                         help="Skip LST diversity enrichment (for debug/replay)")
+    parser.add_argument("--binance-listable-only", action="store_true",
+                        help="Only persist wallets with >= $30k 180d PnL on Binance-listable tokens")
+    parser.add_argument("--binance-symbols", default="data/binance_symbols.json",
+                        help="Path to Binance symbols JSON generated from ccxt")
     main(parser.parse_args())
