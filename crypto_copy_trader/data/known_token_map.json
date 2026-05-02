@@ -1,0 +1,104 @@
+{
+  "_meta": {
+    "description": "Map (chain, contract_address) -> Binance Spot symbol. Used by signals/symbol_mapper.py to translate on-chain tokens to tradeable Binance pairs.",
+    "version": "1.0",
+    "last_updated_utc": "2026-05-02",
+    "address_format": {
+      "eth": "lowercase 0x... (40 hex chars)",
+      "bsc": "lowercase 0x... (40 hex chars)",
+      "sol": "case-sensitive base58 (Solana mint address)"
+    },
+    "binance_quote": "USDT (spot only, no perp/futures)",
+    "verified_against": "ccxt binance.load_markets() on 2026-05-02 (432 active USDT spot pairs)",
+    "extension_instructions": "To add a token: (1) get contract address from CoinGecko /coins/{id} platforms field, (2) verify Binance has BASE/USDT in data/binance_symbols.json, (3) add entry below. SKIP tokens not on Binance — adding them will cause signals to be filtered later anyway.",
+    "deliberate_exclusions": {
+      "stablecoins": "USDT (skip: it's the quote), DAI (delisted from Binance USDT spot 2024)",
+      "wrapped_natives_only_on_quote_chain": "WBNB on BSC -> BNB/USDT only via BSC chain",
+      "delisted_or_renamed": "MATIC->POL migration (use POL contract not legacy MATIC), MKR not on USDT spot, FTM->S migration",
+      "ambiguous_naming": "Solana 'SOL' wallet often emits 'SOL' as native, special-case in mapper code (no contract)"
+    },
+    "multiplier_prefix_pairs": "Binance lists some tokens with multiplier prefix on spot (1000SATS, 1000CAT, 1000CHEEMS, 1MBABYDOGE). Mapper MUST handle quantity unit conversion: if Binance symbol starts with '1000', divide on-chain qty by 1000 before sizing the order; '1M' divides by 1,000,000."
+  },
+
+  "eth": {
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {"binance_symbol": "ETH/USDT", "name": "Wrapped Ether", "decimals": 18},
+    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": {"binance_symbol": "BTC/USDT", "name": "Wrapped BTC", "decimals": 8},
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {"binance_symbol": "USDC/USDT", "name": "USD Coin", "decimals": 6},
+
+    "0x514910771af9ca656af840dff83e8264ecf986ca": {"binance_symbol": "LINK/USDT", "name": "Chainlink", "decimals": 18},
+    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984": {"binance_symbol": "UNI/USDT", "name": "Uniswap", "decimals": 18},
+    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": {"binance_symbol": "AAVE/USDT", "name": "Aave", "decimals": 18},
+    "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce": {"binance_symbol": "SHIB/USDT", "name": "Shiba Inu", "decimals": 18},
+    "0x6982508145454ce325ddbe47a25d4ec3d2311933": {"binance_symbol": "PEPE/USDT", "name": "Pepe", "decimals": 18},
+    "0x5a98fcbea516cf06857215779fd812ca3bef1b32": {"binance_symbol": "LDO/USDT", "name": "Lido DAO", "decimals": 18},
+    "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0": {"binance_symbol": "POL/USDT", "name": "Polygon (POL, formerly MATIC)", "decimals": 18},
+    "0xd533a949740bb3306d119cc777fa900ba034cd52": {"binance_symbol": "CRV/USDT", "name": "Curve DAO", "decimals": 18},
+    "0x6b3595068778dd592e39a122f4f5a5cf09c90fe2": {"binance_symbol": "SUSHI/USDT", "name": "SushiSwap", "decimals": 18},
+    "0xc00e94cb662c3520282e6f5717214004a7f26888": {"binance_symbol": "COMP/USDT", "name": "Compound", "decimals": 18},
+    "0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f": {"binance_symbol": "SNX/USDT", "name": "Synthetix", "decimals": 18},
+    "0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e": {"binance_symbol": "YFI/USDT", "name": "yearn.finance", "decimals": 18},
+    "0x6de037ef9ad2725eb40118bb1702ebb27e4aeb24": {"binance_symbol": "RENDER/USDT", "name": "Render (migrated from RNDR)", "decimals": 18},
+    "0xe28b3b32b6c345a34ff64674606124dd5aceca30": {"binance_symbol": "INJ/USDT", "name": "Injective", "decimals": 18},
+    "0xc944e90c64b2c07662a292be6244bdf05cda44a7": {"binance_symbol": "GRT/USDT", "name": "The Graph", "decimals": 18},
+    "0xc18360217d8f7ab5e7c516566761ea12ce7f9d72": {"binance_symbol": "ENS/USDT", "name": "Ethereum Name Service", "decimals": 18},
+    "0x111111111117dc0aa78b770fa6a738034120c302": {"binance_symbol": "1INCH/USDT", "name": "1inch", "decimals": 18},
+    "0x163f8c2467924be0ae7b5347228cabf260318753": {"binance_symbol": "WLD/USDT", "name": "Worldcoin", "decimals": 18},
+    "0xfaba6f8e4a5e8ab82f62fe7c39859fa577269be3": {"binance_symbol": "ONDO/USDT", "name": "Ondo", "decimals": 18},
+    "0x808507121b80c02388fad14726482e061b8da827": {"binance_symbol": "PENDLE/USDT", "name": "Pendle", "decimals": 18},
+    "0x5283d291dbcf85356a21ba090e6db59121208b44": {"binance_symbol": "BLUR/USDT", "name": "Blur", "decimals": 18},
+    "0x4d224452801aced8b2f0aebe155379bb5d594381": {"binance_symbol": "APE/USDT", "name": "ApeCoin", "decimals": 18},
+    "0xd1d2eb1b1e90b638588728b4130137d262c87cae": {"binance_symbol": "GALA/USDT", "name": "Gala", "decimals": 8},
+    "0xf57e7e7c23978c3caec3c3548e3d615c346e79ff": {"binance_symbol": "IMX/USDT", "name": "Immutable X", "decimals": 18},
+    "0xf629cbd94d3791c9250152bd8dfbdf380e2a3b9c": {"binance_symbol": "ENJ/USDT", "name": "Enjin Coin", "decimals": 18},
+    "0xe41d2489571d322189246dafa5ebde1f4699f498": {"binance_symbol": "ZRX/USDT", "name": "0x Protocol", "decimals": 18},
+    "0x1f573d6fb3f13d689ff844b4ce37794d79a7ff1c": {"binance_symbol": "BNT/USDT", "name": "Bancor", "decimals": 18},
+    "0xec53bf9167f50cdeb3ae105f56099aaab9061f83": {"binance_symbol": "EIGEN/USDT", "name": "EigenLayer", "decimals": 18},
+    "0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb": {"binance_symbol": "ETHFI/USDT", "name": "ether.fi", "decimals": 18},
+    "0xb0ffa8000886e57f86dd5264b9582b2ad87b2b91": {"binance_symbol": "W/USDT", "name": "Wormhole (ETH bridged)", "decimals": 18},
+    "0xca14007eff0db1f8135f4c25b34de49ab0d42766": {"binance_symbol": "STRK/USDT", "name": "Starknet (ETH L1 token)", "decimals": 18},
+    "0xaaee1a9723aadb7afa2810263653a34ba2c21c7a": {"binance_symbol": "MOG/USDT", "name": "Mog Coin", "decimals": 18},
+    "0xa35923162c49cf95e6bf26623385eb431ad920d3": {"binance_symbol": "TURBO/USDT", "name": "Turbo", "decimals": 18},
+    "0xb528edbef013aff855ac3c50b381f253af13b997": {"binance_symbol": "AEVO/USDT", "name": "Aevo", "decimals": 18},
+    "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee": {"binance_symbol": "WEETH/USDT", "name": "Wrapped eETH", "decimals": 18},
+    "0xae78736cd615f374d3085123a210448e74fc6393": {"binance_symbol": "RETH/USDT", "name": "Rocket Pool ETH", "decimals": 18},
+    "0x83f20f44975d03b1b09e64809b757c47f942beea": {"binance_symbol": null, "name": "sDAI (Savings DAI)", "decimals": 18, "skip_reason": "not_on_binance"},
+    "0xae7ab96520de3a18e5e111b5eaab095312d7fe84": {"binance_symbol": null, "name": "stETH (Lido staked ETH)", "decimals": 18, "skip_reason": "not_on_binance_use_eth_signal_separately"},
+    "0xfd0205066521550d7d7ab19da8f72bb004b4c341": {"binance_symbol": null, "name": "LIT (Litentry)", "decimals": 18, "skip_reason": "delisted_from_binance"},
+    "0x6b175474e89094c44da98b954eedeac495271d0f": {"binance_symbol": null, "name": "DAI", "decimals": 18, "skip_reason": "DAI/USDT_delisted_from_binance_spot_2024"},
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": {"binance_symbol": null, "name": "USDT", "decimals": 6, "skip_reason": "is_quote_currency"}
+  },
+
+  "sol": {
+    "So11111111111111111111111111111111111111112": {"binance_symbol": "SOL/USDT", "name": "Wrapped SOL", "decimals": 9},
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {"binance_symbol": "USDC/USDT", "name": "USD Coin (Solana)", "decimals": 6},
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {"binance_symbol": null, "name": "USDT (Solana)", "decimals": 6, "skip_reason": "is_quote_currency"},
+
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {"binance_symbol": "BONK/USDT", "name": "Bonk", "decimals": 5},
+    "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm": {"binance_symbol": "WIF/USDT", "name": "dogwifhat", "decimals": 6},
+    "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL": {"binance_symbol": "JTO/USDT", "name": "Jito", "decimals": 9},
+    "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": {"binance_symbol": "JUP/USDT", "name": "Jupiter", "decimals": 6},
+    "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3": {"binance_symbol": "PYTH/USDT", "name": "Pyth Network", "decimals": 6},
+    "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": {"binance_symbol": "RAY/USDT", "name": "Raydium", "decimals": 6},
+    "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE": {"binance_symbol": "ORCA/USDT", "name": "Orca", "decimals": 6},
+    "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5": {"binance_symbol": null, "name": "cat in a dogs world (MEW)", "decimals": 5, "skip_reason": "not_on_binance_usdt_spot"},
+    "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82": {"binance_symbol": "BOME/USDT", "name": "BOOK OF MEME", "decimals": 6},
+    "85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ": {"binance_symbol": "W/USDT", "name": "Wormhole (Solana)", "decimals": 6},
+    "TNSRxcUxoT9xBG3de7PiJyTDYu7kskLqcpddxnEJAS6": {"binance_symbol": "TNSR/USDT", "name": "Tensor", "decimals": 9},
+    "BZLbGTNCSFfoth2GYDtwr7e4imWzpR5jqcUuGEwr646K": {"binance_symbol": "IO/USDT", "name": "io.net", "decimals": 8},
+    "2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump": {"binance_symbol": "PNUT/USDT", "name": "Peanut the Squirrel", "decimals": 6},
+    "GJAFwWjJ3vnTsrQVabjBVK2TYB1YtRCQXRDfDgUnpump": {"binance_symbol": "ACT/USDT", "name": "Act I: The AI Prophecy", "decimals": 6},
+    "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr": {"binance_symbol": null, "name": "Popcat", "decimals": 9, "skip_reason": "not_on_binance_usdt_spot_verify_before_adding"},
+    "DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7": {"binance_symbol": null, "name": "Drift", "decimals": 6, "skip_reason": "not_on_binance_usdt_spot"}
+  },
+
+  "bsc": {
+    "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c": {"binance_symbol": "BNB/USDT", "name": "Wrapped BNB", "decimals": 18},
+    "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82": {"binance_symbol": "CAKE/USDT", "name": "PancakeSwap", "decimals": 18},
+    "0x55d398326f99059ff775485246999027b3197955": {"binance_symbol": null, "name": "USDT (BSC)", "decimals": 18, "skip_reason": "is_quote_currency"},
+    "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": {"binance_symbol": "USDC/USDT", "name": "USDC (BSC)", "decimals": 18},
+    "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": {"binance_symbol": "BTC/USDT", "name": "Wrapped BTC (BSC)", "decimals": 18},
+    "0x2170ed0880ac9a755fd29b2688956bd959f933f8": {"binance_symbol": "ETH/USDT", "name": "Ether (BSC bridged)", "decimals": 18},
+    "0xfb5b838b6cfeedc2873ab27866079ac55363d37e": {"binance_symbol": null, "name": "FLOKI (BSC)", "decimals": 9, "skip_reason": "use_eth_floki_contract_for_dedup"},
+    "0xe9e7cea3dedca5984780bafc599bd69add087d56": {"binance_symbol": null, "name": "BUSD", "decimals": 18, "skip_reason": "deprecated_2024"}
+  }
+}
