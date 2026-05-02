@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
@@ -218,7 +219,7 @@ class BinanceExecutor:
                 estimated_fee_pct=estimated_fee_pct,
             )
 
-        return await self._execute_live(
+        return await self._execute_with_maker_first(
             decision=decision,
             quantity=quantity,
             pre_trade_mid_price=pre_trade_mid_price,
@@ -373,6 +374,155 @@ class BinanceExecutor:
             error=None,
         )
 
+    async def _execute_with_maker_first(
+        self,
+        *,
+        decision: TradeDecision,
+        quantity: Decimal,
+        pre_trade_mid_price: Decimal,
+        estimated_slippage_pct: float | None,
+        estimated_fee_pct: float | None,
+    ) -> ExecutionResult:
+        orderbook = await self.fetch_orderbook(decision.symbol)
+        bid = Decimal(str(orderbook["bids"][0][0]))
+        ask = Decimal(str(orderbook["asks"][0][0]))
+        spread_pct = (ask - bid) / ((bid + ask) / Decimal("2"))
+        if spread_pct > Decimal("0.005"):
+            return _failed_execution_result(
+                pre_trade_mid_price=pre_trade_mid_price,
+                estimated_slippage_pct=estimated_slippage_pct,
+                estimated_fee_pct=estimated_fee_pct,
+                error="wide_spread",
+            )
+
+        limit_price = _maker_limit_price(decision.action, pre_trade_mid_price)
+        _, quantized_price = self._quantize(decision.symbol, quantity, limit_price)
+        try:
+            limit_order = await self.exchange.create_order(
+                decision.symbol,
+                "limit",
+                decision.action,
+                float(quantity),
+                float(quantized_price),
+                {"postOnly": True},
+            )
+        except (ccxt.InvalidOrder, ccxt.ExchangeError, AttributeError):
+            return await self._execute_live(
+                decision=decision,
+                quantity=quantity,
+                pre_trade_mid_price=pre_trade_mid_price,
+                estimated_slippage_pct=estimated_slippage_pct,
+                estimated_fee_pct=estimated_fee_pct,
+            )
+
+        await asyncio.sleep(1.5)
+        fetched_order = await self._fetch_order_or_default(limit_order, decision.symbol)
+        filled_quantity = Decimal(str(fetched_order.get("filled") or 0))
+        avg_price = Decimal(str(fetched_order.get("average") or quantized_price))
+        fee_usdt = Decimal(str((fetched_order.get("fee") or {}).get("cost", 0)))
+        if filled_quantity >= quantity:
+            return await self._finalize_order_result(
+                decision=decision,
+                quantity=quantity,
+                avg_price=avg_price,
+                fee_usdt=fee_usdt,
+                pre_trade_mid_price=pre_trade_mid_price,
+                estimated_slippage_pct=estimated_slippage_pct,
+                estimated_fee_pct=estimated_fee_pct,
+                binance_order_id=str(fetched_order.get("id") or limit_order.get("id")),
+            )
+
+        await self._cancel_order_if_possible(limit_order, decision.symbol)
+        remaining_quantity = quantity - filled_quantity
+        if remaining_quantity <= Decimal("0"):
+            remaining_quantity = Decimal("0")
+        if remaining_quantity == quantity:
+            return await self._execute_live(
+                decision=decision,
+                quantity=quantity,
+                pre_trade_mid_price=pre_trade_mid_price,
+                estimated_slippage_pct=estimated_slippage_pct,
+                estimated_fee_pct=estimated_fee_pct,
+            )
+
+        market_order = await self._create_market_order(decision, remaining_quantity)
+        market_quantity = Decimal(str(market_order.get("filled") or remaining_quantity))
+        market_avg_price = Decimal(str(market_order.get("average") or pre_trade_mid_price))
+        market_fee = Decimal(str((market_order.get("fee") or {}).get("cost", 0)))
+        total_quantity = filled_quantity + market_quantity
+        weighted_avg = ((filled_quantity * avg_price) + (market_quantity * market_avg_price)) / total_quantity
+        return await self._finalize_order_result(
+            decision=decision,
+            quantity=total_quantity,
+            avg_price=weighted_avg,
+            fee_usdt=fee_usdt + market_fee,
+            pre_trade_mid_price=pre_trade_mid_price,
+            estimated_slippage_pct=estimated_slippage_pct,
+            estimated_fee_pct=estimated_fee_pct,
+            binance_order_id=str(market_order.get("id") or limit_order.get("id")),
+        )
+
+    async def _fetch_order_or_default(self, order: dict, symbol: str) -> dict:
+        fetch_order = getattr(self.exchange, "fetch_order", None)
+        if fetch_order is None:
+            return order
+        return await fetch_order(order.get("id"), symbol)
+
+    async def _cancel_order_if_possible(self, order: dict, symbol: str) -> None:
+        cancel_order = getattr(self.exchange, "cancel_order", None)
+        if cancel_order is None:
+            return
+        try:
+            await cancel_order(order.get("id"), symbol)
+        except (ccxt.OrderNotFound, ccxt.InvalidOrder, ccxt.ExchangeError):
+            return
+
+    async def _finalize_order_result(
+        self,
+        *,
+        decision: TradeDecision,
+        quantity: Decimal,
+        avg_price: Decimal,
+        fee_usdt: Decimal,
+        pre_trade_mid_price: Decimal,
+        estimated_slippage_pct: float | None,
+        estimated_fee_pct: float | None,
+        binance_order_id: str | None,
+    ) -> ExecutionResult:
+        realized_slippage_pct = _realized_slippage(
+            action=decision.action,
+            avg_price=avg_price,
+            pre_trade_mid_price=pre_trade_mid_price,
+        )
+        realized_fee_pct = float(fee_usdt / Decimal(str(decision.quantity_usdt)))
+        await self._record_trade(
+            decision=decision,
+            quantity=quantity,
+            avg_price=avg_price,
+            fee_usdt=fee_usdt,
+            status="filled",
+            paper_trading=False,
+            binance_order_id=binance_order_id,
+            pre_trade_mid_price=pre_trade_mid_price,
+            estimated_slippage_pct=estimated_slippage_pct,
+            realized_slippage_pct=realized_slippage_pct,
+            estimated_fee_pct=estimated_fee_pct,
+            realized_fee_pct=realized_fee_pct,
+        )
+        return ExecutionResult(
+            success=True,
+            filled_quantity=quantity,
+            avg_price=avg_price,
+            fee_usdt=fee_usdt,
+            pre_trade_mid_price=pre_trade_mid_price,
+            estimated_slippage_pct=estimated_slippage_pct,
+            realized_slippage_pct=realized_slippage_pct,
+            estimated_fee_pct=estimated_fee_pct,
+            realized_fee_pct=realized_fee_pct,
+            binance_order_id=binance_order_id,
+            error=None,
+        )
+
     async def _execute_live(
         self,
         *,
@@ -499,6 +649,13 @@ class BinanceExecutor:
             result = record_trade(**kwargs)
             if hasattr(result, "__await__"):
                 await result
+
+def _maker_limit_price(action: str, mid_price: Decimal) -> Decimal:
+    adjustment = Decimal("0.0005")
+    if action == "buy":
+        return mid_price * (Decimal("1") + adjustment)
+    return mid_price * (Decimal("1") - adjustment)
+
 
 def _extract_symbol_filters(market: dict[str, Any]) -> SymbolFilters:
     filters = _filters_by_type(market)

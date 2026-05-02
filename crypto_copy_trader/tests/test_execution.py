@@ -175,6 +175,9 @@ def build_exchange() -> SimpleNamespace:
         create_market_sell_order=AsyncMock(
             return_value={"id": "sell-1", "average": 50000, "fee": {"cost": 0.75}}
         ),
+        create_order=AsyncMock(side_effect=AttributeError("create_order unavailable")),
+        fetch_order=AsyncMock(return_value={"id": "limit-1", "filled": 0, "average": 50025, "fee": {"cost": 0}}),
+        cancel_order=AsyncMock(return_value={"id": "limit-1"}),
     )
 
 
@@ -253,7 +256,7 @@ async def test_execute_exit_uses_market_sell_for_position_fraction() -> None:
 async def test_live_trading_computes_realized_slippage() -> None:
     exchange = build_exchange()
     exchange.fetch_ticker = AsyncMock(return_value={"last": 100})
-    exchange.fetch_order_book = AsyncMock(return_value={"bids": [[99.5, 10]], "asks": [[100.5, 10]]})
+    exchange.fetch_order_book = AsyncMock(return_value={"bids": [[99.95, 10]], "asks": [[100.05, 10]]})
     exchange.create_market_buy_order = AsyncMock(
         return_value={"id": "buy-1", "average": 100.5, "fee": {"cost": 1}}
     )
@@ -269,7 +272,7 @@ async def test_live_trading_computes_realized_slippage() -> None:
 async def test_sell_slippage_sign_correct() -> None:
     exchange = build_exchange()
     exchange.fetch_ticker = AsyncMock(return_value={"last": 100})
-    exchange.fetch_order_book = AsyncMock(return_value={"bids": [[99.5, 10]], "asks": [[100.5, 10]]})
+    exchange.fetch_order_book = AsyncMock(return_value={"bids": [[99.95, 10]], "asks": [[100.05, 10]]})
     exchange.create_market_sell_order = AsyncMock(
         return_value={"id": "sell-1", "average": 99.5, "fee": {"cost": 1}}
     )
@@ -475,6 +478,71 @@ async def test_quantize_rejects_pepe_below_min_notional() -> None:
     assert result.success is False
     assert result.error == "min_notional_not_met"
     exchange.create_market_buy_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maker_first_then_market_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("execution.asyncio.sleep", AsyncMock())
+    exchange = build_exchange()
+    exchange.create_order = AsyncMock(return_value={"id": "limit-1", "filled": 0, "average": 50025, "fee": {"cost": 0}})
+    exchange.fetch_order = AsyncMock(return_value={"id": "limit-1", "filled": "0", "average": 50025, "fee": {"cost": 0}})
+    executor = await _build_executor(paper_trading=False, exchange=exchange)
+
+    result = await executor.execute(build_decision())
+
+    assert result.success is True
+    exchange.create_order.assert_awaited_once()
+    assert exchange.create_order.await_args.args[:4] == ("BTC/USDT", "limit", "buy", 0.02)
+    assert exchange.create_order.await_args.args[5] == {"postOnly": True}
+    exchange.cancel_order.assert_awaited_once_with("limit-1", "BTC/USDT")
+    exchange.create_market_buy_order.assert_awaited_once_with("BTC/USDT", 0.02)
+
+
+@pytest.mark.asyncio
+async def test_post_only_rejection_falls_back_to_market(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("execution.asyncio.sleep", AsyncMock())
+    exchange = build_exchange()
+    exchange.create_order = AsyncMock(side_effect=ccxt.InvalidOrder("post only rejected"))
+    executor = await _build_executor(paper_trading=False, exchange=exchange)
+
+    result = await executor.execute(build_decision())
+
+    assert result.success is True
+    exchange.create_market_buy_order.assert_awaited_once_with("BTC/USDT", 0.02)
+
+
+@pytest.mark.asyncio
+async def test_wide_spread_skips_entry() -> None:
+    exchange = build_exchange()
+    exchange.fetch_order_book = AsyncMock(return_value={"bids": [[90, 1]], "asks": [[110, 1]]})
+    executor = await _build_executor(paper_trading=False, exchange=exchange)
+
+    result = await executor.execute(build_decision())
+
+    assert result.success is False
+    assert result.error == "wide_spread"
+    exchange.create_order.assert_not_awaited()
+    exchange.create_market_buy_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exit_always_uses_market(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("execution.asyncio.sleep", AsyncMock())
+    exchange = build_exchange()
+    executor = await _build_executor(paper_trading=False, exchange=exchange)
+    position = Position(
+        symbol="BTC/USDT",
+        quantity=Decimal("0.2"),
+        avg_entry_price=Decimal("50000"),
+        entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        source_wallet="0xabc123",
+    )
+
+    result = await executor.execute_exit("BTC/USDT", Decimal("0.5"), position=position)
+
+    assert result.success is True
+    exchange.create_order.assert_not_awaited()
+    exchange.create_market_sell_order.assert_awaited_once_with("BTC/USDT", 0.1)
 
 
 @pytest.mark.asyncio
