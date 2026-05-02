@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 RUN python -c "import pathlib, shutil; path = pathlib.Path('/app/execution'); shutil.rmtree(path) if path.exists() else None"
 COPY . /app
+RUN python -c "import pathlib, shutil; path = pathlib.Path('/app/execution'); shutil.rmtree(path) if path.exists() else None"
 
 RUN chown -R appuser:appuser /app
 USER appuser
