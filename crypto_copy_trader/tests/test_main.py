@@ -44,6 +44,7 @@ def build_event(*, tx_hash: str = "tx-happy", amount_usd: str = "15000") -> OnCh
         amount_token=Decimal("5"),
         amount_usd=Decimal(amount_usd),
         raw={"block_number": 100},
+        token_address="",
     )
 
 

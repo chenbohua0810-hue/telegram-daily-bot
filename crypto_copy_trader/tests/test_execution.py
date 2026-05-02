@@ -191,6 +191,7 @@ async def _build_executor(
         exchange=exchange or build_exchange(),
         trades_repo=trades_repo or SimpleNamespace(record_trade=AsyncMock()),
     )
+    await executor.load_markets()
     return executor
 
 
@@ -218,6 +219,34 @@ async def test_live_trading_calls_create_order() -> None:
     await executor.execute(build_decision())
 
     exchange.create_market_buy_order.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_exit_uses_market_sell_for_position_fraction() -> None:
+    exchange = build_exchange()
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=False, exchange=exchange, trades_repo=trades_repo)
+    position = Position(
+        symbol="BTC/USDT",
+        quantity=Decimal("0.2"),
+        avg_entry_price=Decimal("50000"),
+        entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        source_wallet="0xabc123",
+    )
+
+    result = await executor.execute_exit(
+        "BTC/USDT",
+        Decimal("0.5"),
+        position=position,
+        source_wallet="0xabc123",
+        reason="mirror_wallet_0xabc123",
+    )
+
+    assert result.success is True
+    assert result.filled_quantity == Decimal("0.10000000")
+    exchange.create_market_sell_order.assert_awaited_once_with("BTC/USDT", 0.1)
+    assert trades_repo.record_trade.await_args.kwargs["action"] == "sell"
+    assert trades_repo.record_trade.await_args.kwargs["reasoning"] == "mirror_wallet_0xabc123"
 
 
 @pytest.mark.asyncio
@@ -347,3 +376,123 @@ async def test_load_markets_filters_usdt_pairs() -> None:
     symbols = await executor.load_markets()
 
     assert symbols == {"BTC/USDT"}
+
+
+@pytest.mark.asyncio
+async def test_quantizes_btc_quantity_using_lot_size() -> None:
+    exchange = build_exchange()
+    exchange.load_markets = AsyncMock(
+        return_value={
+            "BTC/USDT": {
+                "info": {
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "0.00001"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                        {"filterType": "MIN_NOTIONAL", "minNotional": "10"},
+                    ]
+                }
+            }
+        }
+    )
+    exchange.fetch_ticker = AsyncMock(return_value={"last": 50000})
+    trades_repo = SimpleNamespace(record_trade=AsyncMock(return_value=1), get_positions=AsyncMock(return_value=[]))
+    executor = await _build_executor(paper_trading=False, exchange=exchange, trades_repo=trades_repo)
+    await executor.load_markets()
+
+    result = await executor.execute(build_decision(quantity_usdt=1000.43))
+
+    assert result.success is True
+    exchange.create_market_buy_order.assert_awaited_once_with("BTC/USDT", 0.02000)
+
+
+@pytest.mark.asyncio
+async def test_quantizes_shib_tiny_unit_without_dropping_notional() -> None:
+    exchange = build_exchange()
+    exchange.load_markets = AsyncMock(
+        return_value={
+            "SHIB/USDT": {
+                "info": {
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "1"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.00000001"},
+                        {"filterType": "MIN_NOTIONAL", "minNotional": "5"},
+                    ]
+                }
+            }
+        }
+    )
+    exchange.fetch_ticker = AsyncMock(return_value={"last": "0.00001234"})
+    exchange.fetch_order_book = AsyncMock(return_value={"bids": [["0.00001233", 1]], "asks": [["0.00001235", 1]]})
+    exchange.create_market_buy_order = AsyncMock(return_value={"id": "buy-shib", "average": "0.00001234", "fee": {"cost": 0.01}})
+    decision = TradeDecision(
+        action="buy",
+        symbol="SHIB/USDT",
+        quantity_usdt=25.0,
+        confidence=80,
+        reasoning="Execution test decision.",
+        source_wallet="0xabc123",
+    )
+    executor = await _build_executor(paper_trading=False, exchange=exchange)
+    await executor.load_markets()
+
+    result = await executor.execute(decision)
+
+    assert result.success is True
+    exchange.create_market_buy_order.assert_awaited_once_with("SHIB/USDT", 2025931.0)
+
+
+@pytest.mark.asyncio
+async def test_quantize_rejects_pepe_below_min_notional() -> None:
+    exchange = build_exchange()
+    exchange.load_markets = AsyncMock(
+        return_value={
+            "PEPE/USDT": {
+                "info": {
+                    "filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "1"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.00000001"},
+                        {"filterType": "MIN_NOTIONAL", "minNotional": "10"},
+                    ]
+                }
+            }
+        }
+    )
+    exchange.fetch_ticker = AsyncMock(return_value={"last": "0.000001"})
+    exchange.fetch_order_book = AsyncMock(return_value={"bids": [["0.00000099", 1]], "asks": [["0.00000101", 1]]})
+    decision = TradeDecision(
+        action="buy",
+        symbol="PEPE/USDT",
+        quantity_usdt=5.0,
+        confidence=80,
+        reasoning="Execution test decision.",
+        source_wallet="0xabc123",
+    )
+    executor = await _build_executor(paper_trading=False, exchange=exchange)
+    await executor.load_markets()
+
+    result = await executor.execute(decision)
+
+    assert result.success is False
+    assert result.error == "min_notional_not_met"
+    exchange.create_market_buy_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_quantize_fails_closed_when_symbol_filters_missing() -> None:
+    exchange = build_exchange()
+    exchange.load_markets = AsyncMock(return_value={"BTC/USDT": {}})
+    decision = TradeDecision(
+        action="buy",
+        symbol="UNKNOWN/USDT",
+        quantity_usdt=1000.0,
+        confidence=80,
+        reasoning="Execution test decision.",
+        source_wallet="0xabc123",
+    )
+    executor = await _build_executor(paper_trading=False, exchange=exchange)
+
+    result = await executor.execute(decision)
+
+    assert result.success is False
+    assert result.error == "min_notional_not_met"
+    exchange.create_market_buy_order.assert_not_awaited()

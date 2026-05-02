@@ -40,6 +40,7 @@ def build_event(*, tx_hash: str = "0xtxhash") -> OnChainEvent:
         amount_token=Decimal("1.5"),
         amount_usd=Decimal("3000"),
         raw={"hash": tx_hash},
+        token_address="",
     )
 
 

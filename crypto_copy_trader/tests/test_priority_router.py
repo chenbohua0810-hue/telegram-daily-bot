@@ -21,6 +21,7 @@ def build_event(amount_usd: float = 1_000.0, token_symbol: str = "ETH") -> OnCha
         amount_token=Decimal("1"),
         amount_usd=Decimal(str(amount_usd)),
         raw={},
+        token_address="",
     )
 
 

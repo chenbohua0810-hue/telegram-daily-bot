@@ -12,6 +12,7 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from models import OnChainEvent
+from signals.symbol_mapper import map_to_binance
 from storage import AddressesRepo, EventLog
 
 
@@ -291,9 +292,10 @@ class EthMonitor(ChainMonitor):
             return None
 
         token_symbol = str(tx["tokenSymbol"]).upper()
+        token_address = str(tx.get("contractAddress") or "").lower()
         decimals = int(tx["tokenDecimal"])
         amount_token = Decimal(tx["value"]) / (Decimal(10) ** decimals)
-        amount_usd = await self._estimate_amount_usd(token_symbol, amount_token)
+        amount_usd = await self._estimate_amount_usd(token_symbol, amount_token, token_address)
 
         raw = dict(tx)
         raw["block_number"] = int(tx["blockNumber"])
@@ -308,10 +310,11 @@ class EthMonitor(ChainMonitor):
             amount_token=amount_token,
             amount_usd=amount_usd,
             raw=raw,
+            token_address=token_address,
         )
 
-    async def _estimate_amount_usd(self, token_symbol: str, amount_token: Decimal) -> Decimal:
-        symbol = f"{token_symbol}/USDT"
+    async def _estimate_amount_usd(self, token_symbol: str, amount_token: Decimal, token_address: str) -> Decimal:
+        symbol = map_to_binance(self.chain, token_address, token_symbol)
         if symbol not in self._binance_symbols:
             return Decimal("0")
 
@@ -428,8 +431,9 @@ class SolMonitor(ChainMonitor):
             return None
 
         token_symbol = str(tx["token_symbol"]).upper()
+        token_address = str(tx.get("token_address") or tx.get("tokenAddress") or "")
         amount_token = Decimal(tx["amount"]) / (Decimal(10) ** int(decimals))
-        amount_usd = await self._estimate_amount_usd(token_symbol, amount_token)
+        amount_usd = await self._estimate_amount_usd(token_symbol, amount_token, token_address)
         tx_type = "swap_in" if transfer_type == "in" else "swap_out"
         raw = dict(tx)
         raw["slot"] = int(tx["block_time"])
@@ -445,10 +449,11 @@ class SolMonitor(ChainMonitor):
             amount_token=amount_token,
             amount_usd=amount_usd,
             raw=raw,
+            token_address=token_address,
         )
 
-    async def _estimate_amount_usd(self, token_symbol: str, amount_token: Decimal) -> Decimal:
-        symbol = f"{token_symbol}/USDT"
+    async def _estimate_amount_usd(self, token_symbol: str, amount_token: Decimal, token_address: str) -> Decimal:
+        symbol = map_to_binance(self.chain, token_address, token_symbol)
         if symbol not in self._binance_symbols:
             return Decimal("0")
 
@@ -568,8 +573,9 @@ class BirdeyeSolMonitor(ChainMonitor):
             return None
 
         token_symbol = str(token_side.get("symbol") or "UNKNOWN").upper()
+        token_address = str(token_side.get("address") or "")
         amount_token = Decimal(str(token_side.get("ui_amount") or 0))
-        amount_usd = await self._estimate_amount_usd(token_symbol, amount_token)
+        amount_usd = await self._estimate_amount_usd(token_symbol, amount_token, token_address)
 
         raw = dict(tx)
         raw["slot"] = ts
@@ -584,10 +590,11 @@ class BirdeyeSolMonitor(ChainMonitor):
             amount_token=amount_token,
             amount_usd=amount_usd,
             raw=raw,
+            token_address=token_address,
         )
 
-    async def _estimate_amount_usd(self, token_symbol: str, amount_token: Decimal) -> Decimal:
-        symbol = f"{token_symbol}/USDT"
+    async def _estimate_amount_usd(self, token_symbol: str, amount_token: Decimal, token_address: str) -> Decimal:
+        symbol = map_to_binance(self.chain, token_address, token_symbol)
         if symbol not in self._binance_symbols:
             return Decimal("0")
         try:

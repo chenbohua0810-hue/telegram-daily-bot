@@ -59,6 +59,7 @@ def build_event(
         amount_token=Decimal("1.5"),
         amount_usd=Decimal("3000"),
         raw={"hash": tx_hash},
+        token_address="",
     )
 
 

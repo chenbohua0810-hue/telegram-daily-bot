@@ -22,6 +22,7 @@ def build_event() -> OnChainEvent:
         amount_token=Decimal("1"),
         amount_usd=Decimal("2000"),
         raw={"block_number": 100},
+        token_address="",
     )
 
 

@@ -13,7 +13,7 @@ from reporting import TelegramNotifier
 from execution import ExecutionResult
 from models import TradeDecision
 from models import OnChainEvent
-from models import DecisionSnapshotBuilder
+from models import DecisionSnapshotBuilder, Position
 
 
 def build_event() -> OnChainEvent:
@@ -27,6 +27,7 @@ def build_event() -> OnChainEvent:
         amount_token=Decimal("1"),
         amount_usd=Decimal("2000"),
         raw={"block_number": 100},
+        token_address="",
     )
 
 
@@ -86,6 +87,15 @@ def test_log_fill_buy_creates_position_and_snapshot() -> None:
 def test_log_fill_sell_removes_position_if_zero() -> None:
     repo = Mock()
     repo.record_trade.return_value = 7
+    repo.get_positions.return_value = [
+        Position(
+            symbol="ETH/USDT",
+            quantity=Decimal("0.5"),
+            avg_entry_price=Decimal("2000"),
+            entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+            source_wallet="0xabc123",
+        )
+    ]
     logger = TradeLogger(repo)
 
     trade_id = logger.log_fill(build_decision("sell"), build_result(), build_snapshot("sell"))
@@ -94,6 +104,53 @@ def test_log_fill_sell_removes_position_if_zero() -> None:
     assert repo.remove_position.called
     snapshot = repo.record_snapshot.call_args.args[0]
     assert snapshot.final_action == "sell"
+
+
+def test_log_fill_sell_partial_updates_remaining_position() -> None:
+    repo = Mock()
+    repo.record_trade.return_value = 8
+    repo.get_positions.return_value = [
+        Position(
+            symbol="ETH/USDT",
+            quantity=Decimal("1.5"),
+            avg_entry_price=Decimal("2000"),
+            entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+            source_wallet="0xabc123",
+        )
+    ]
+    logger = TradeLogger(repo)
+
+    logger.log_fill(build_decision("sell"), build_result(), build_snapshot("sell"))
+
+    repo.remove_position.assert_not_called()
+    updated_position = repo.upsert_position.call_args.args[0]
+    assert updated_position.quantity == Decimal("1.0")
+    assert updated_position.symbol == "ETH/USDT"
+
+
+def test_log_fill_failed_sell_keeps_position() -> None:
+    repo = Mock()
+    repo.record_trade.return_value = 9
+    failed_result = ExecutionResult(
+        success=False,
+        filled_quantity=Decimal("0"),
+        avg_price=Decimal("0"),
+        fee_usdt=Decimal("0"),
+        pre_trade_mid_price=Decimal("1999"),
+        estimated_slippage_pct=None,
+        realized_slippage_pct=None,
+        estimated_fee_pct=None,
+        realized_fee_pct=None,
+        binance_order_id=None,
+        error="network_error",
+    )
+    logger = TradeLogger(repo)
+
+    logger.log_fill(build_decision("sell"), failed_result, build_snapshot("sell"))
+
+    assert repo.record_trade.call_args.kwargs["status"] == "failed"
+    repo.remove_position.assert_not_called()
+    repo.upsert_position.assert_not_called()
 
 
 def test_log_skip_writes_snapshot_not_trade() -> None:

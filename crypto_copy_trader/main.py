@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -18,9 +18,11 @@ from execution import BinanceExecutor, compute_position_size, check_risk
 from models import DecisionSnapshot, OnChainEvent, TradeDecision
 from monitors import BirdeyeSolMonitor, BscMonitor, BscWebSocketMonitor, EthMonitor, EthWebSocketMonitor, SolMonitor, SolWebSocketMonitor
 from reporting import PerformanceTracker, TelegramNotifier, TradeLogger
+from signals.exit_router import should_mirror_exit
 from signals.filters import compute_sentiment, compute_technicals, estimate_cost, ohlcv_to_volatility, quant_filter, should_reject
 from signals.router import AnthropicBackend, FallbackBackend, LLMBackendError, OpenAICompatBackend, assign_priority
 from signals.scorer import AIScore, AIScorerError, BatchScorer, PROMPT_SYSTEM, score_signal
+from signals.symbol_mapper import map_to_binance
 from storage import AddressesRepo, EventLog, TradesRepo, init_addresses_db, init_trades_db
 from wallet_scorer import WalletScorer
 
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 CorrelationProvider = Callable[[str, list[str]], dict[str, float]]
+_SYMBOL_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 @dataclass(frozen=True)
@@ -67,7 +70,12 @@ async def process_event(
     daily_pnl: float,
     deps: PipelineDeps,
 ) -> None:
-    symbol = f"{event.token_symbol}/USDT"
+    if event.tx_type == "swap_out":
+        await _process_exit_event(event, portfolio, deps)
+        _append_recent_event(deps.recent_events_cache, event)
+        return
+
+    symbol = map_to_binance(event.chain, event.token_address, event.token_symbol) or f"{event.token_symbol}/USDT"
     builder = _new_snapshot_builder(event, symbol)
 
     try:
@@ -185,16 +193,116 @@ async def process_event(
             reasoning=ai.reasoning,
             source_wallet=event.wallet,
         )
-        snapshot = builder.execute(decision.action)
-        result = await deps.executor.execute(
-            decision,
-            estimated_slippage_pct=cost.slippage_pct,
-            estimated_fee_pct=cost.fee_pct,
-        )
+        async with _get_symbol_lock(symbol):
+            snapshot = builder.execute(decision.action)
+            result = await deps.executor.execute(
+                decision,
+                estimated_slippage_pct=cost.slippage_pct,
+                estimated_fee_pct=cost.fee_pct,
+            )
         deps.trade_logger.log_fill(decision, result, snapshot)
         await deps.notifier.notify_trade_fill(decision, result)
     finally:
         _append_recent_event(deps.recent_events_cache, event)
+
+
+async def _process_exit_event(event: OnChainEvent, portfolio: Any, deps: PipelineDeps) -> None:
+    symbol = map_to_binance(event.chain, event.token_address, event.token_symbol)
+    builder = _new_snapshot_builder(event, symbol or f"{event.token_symbol}/USDT")
+    if symbol is None:
+        _log_skip(event, "exit:not_on_binance", builder, deps)
+        return
+
+    async with _get_symbol_lock(symbol):
+        current_position = _find_current_position(deps.trades_repo, symbol)
+        if current_position is None and hasattr(deps.trades_repo, "get_positions"):
+            _log_skip(event, "exit:no_matching_position", builder, deps)
+            return
+        if current_position is None:
+            current_position = portfolio.positions.get(symbol)
+        if current_position is None:
+            _log_skip(event, "exit:no_matching_position", builder, deps)
+            return
+        exit_event = _with_rolling_sell_fraction(event, deps.recent_events_cache)
+        decision = should_mirror_exit(exit_event, current_position)
+        if not decision.should_exit or decision.symbol is None:
+            _log_skip(event, f"exit:{decision.reason}", builder, deps)
+            return
+
+        result = await deps.executor.execute_exit(
+            decision.symbol,
+            decision.fraction,
+            position=current_position,
+            source_wallet=event.wallet,
+            reason=decision.reason,
+        )
+
+    exit_trade = TradeDecision(
+        action="sell",
+        symbol=decision.symbol,
+        quantity_usdt=float(current_position.quantity * current_position.avg_entry_price * decision.fraction),
+        confidence=100,
+        reasoning=decision.reason,
+        source_wallet=event.wallet,
+    )
+    snapshot = builder.execute("sell")
+    deps.trade_logger.log_fill(exit_trade, result, snapshot)
+    notifier = getattr(deps.notifier, "notify_risk_alert", None)
+    if notifier is not None and result.success:
+        await notifier(f"[EXIT] symbol={decision.symbol} fraction={decision.fraction} reason={decision.reason}")
+    elif notifier is not None:
+        await notifier(f"[EXIT_FAILED] symbol={decision.symbol} fraction={decision.fraction} reason={decision.reason} error={result.error}")
+
+
+def _get_symbol_lock(symbol: str) -> asyncio.Lock:
+    lock = _SYMBOL_LOCKS.get(symbol)
+    if lock is not None:
+        return lock
+
+    new_lock = asyncio.Lock()
+    _SYMBOL_LOCKS[symbol] = new_lock
+    return new_lock
+
+
+def _find_current_position(trades_repo: Any, symbol: str) -> Any | None:
+    get_positions = getattr(trades_repo, "get_positions", None)
+    if get_positions is None:
+        return None
+
+    positions = get_positions()
+    for position in positions:
+        if position.symbol == symbol:
+            return position
+    return None
+
+
+def _with_rolling_sell_fraction(event: OnChainEvent, recent_events: list[OnChainEvent]) -> OnChainEvent:
+    balance_before = event.raw.get("wallet_token_balance_before")
+    if balance_before is None:
+        return event
+
+    symbol = map_to_binance(event.chain, event.token_address, event.token_symbol)
+    cutoff = event.block_time - timedelta(minutes=30)
+    rolling_amount = event.amount_token
+    for recent_event in recent_events:
+        recent_symbol = map_to_binance(
+            recent_event.chain,
+            recent_event.token_address,
+            recent_event.token_symbol,
+        )
+        is_same_window = cutoff <= recent_event.block_time <= event.block_time
+        is_same_exit = recent_event.tx_type == "swap_out" and recent_event.wallet == event.wallet
+        if is_same_window and is_same_exit and recent_symbol == symbol:
+            rolling_amount += recent_event.amount_token
+
+    balance = Decimal(str(balance_before))
+    if balance <= Decimal("0"):
+        return event
+
+    return replace(
+        event,
+        raw={**event.raw, "rolling_sold_fraction": str(rolling_amount / balance)},
+    )
 
 
 async def process_events(

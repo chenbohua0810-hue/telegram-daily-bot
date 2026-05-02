@@ -142,13 +142,46 @@ def test_event_roundtrip_jsonl() -> None:
         token_symbol="WETH",
         amount_token=Decimal("1.2345"),
         amount_usd=Decimal("2500.12"),
-        raw={"hash": "0xtxhash", "token": "WETH"},
+        raw={"hash": "0xtxhash", "token": "***"},
+        token_address="0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     )
 
     serialized = event.to_dict()
     restored = OnChainEvent.from_dict(serialized)
 
     assert restored == event
+
+
+def test_event_requires_token_address() -> None:
+    with pytest.raises(TypeError):
+        OnChainEvent(
+            chain="eth",
+            wallet="0xabc123",
+            tx_hash="0xtxhash",
+            block_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+            tx_type="swap_in",
+            token_symbol="WETH",
+            amount_token=Decimal("1.2345"),
+            amount_usd=Decimal("2500.12"),
+            raw={"hash": "0xtxhash"},
+        )
+
+
+def test_event_from_dict_requires_token_address() -> None:
+    payload = {
+        "chain": "eth",
+        "wallet": "0xabc123",
+        "tx_hash": "0xtxhash",
+        "block_time": datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "tx_type": "swap_in",
+        "token_symbol": "WETH",
+        "amount_token": "1.2345",
+        "amount_usd": "2500.12",
+        "raw": {"hash": "0xtxhash"},
+    }
+
+    with pytest.raises(KeyError):
+        OnChainEvent.from_dict(payload)
 
 
 def test_position_is_frozen() -> None:

@@ -12,6 +12,8 @@ from storage import AddressesRepo
 
 _SOL_MINT = "So11111111111111111111111111111111111111112"
 _USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+_JUP_MINT = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"
+_BONK_MINT = "DezXAZ8z7PnrnRJjz3VjVUL7JV2W6APW3w1pPB263wW"
 
 
 def _make_tx(
@@ -72,7 +74,7 @@ async def test_parse_swap_base_from_picks_quote_as_token(tmp_path) -> None:
                     quote={
                         "type_swap": "to",
                         "symbol": "JUP",
-                        "address": "JUPmint",
+                        "address": _JUP_MINT,
                         "ui_amount": 50,
                     },
                 ),
@@ -112,7 +114,7 @@ async def test_parse_swap_quote_from_picks_base_as_sent_token(tmp_path) -> None:
                     quote={
                         "type_swap": "from",
                         "symbol": "BONK",
-                        "address": "BONKmint",
+                        "address": _BONK_MINT,
                         "ui_amount": 1_000_000,
                     },
                 ),
@@ -172,7 +174,7 @@ async def test_parse_swap_skips_unknown_type_swap(tmp_path) -> None:
             "items": [
                 _make_tx(
                     base={"symbol": "USDC", "address": _USDC_MINT, "ui_amount": 100},
-                    quote={"symbol": "JUP", "address": "JUPmint", "ui_amount": 50},
+                    quote={"symbol": "JUP", "address": _JUP_MINT, "ui_amount": 50},
                 ),
             ]
         }
@@ -257,7 +259,7 @@ async def test_estimate_amount_usd_swallows_price_http_error(tmp_path) -> None:
                     quote={
                         "type_swap": "to",
                         "symbol": "JUP",
-                        "address": "JUPmint",
+                        "address": _JUP_MINT,
                         "ui_amount": 50,
                     },
                 ),

@@ -13,6 +13,7 @@ from ta.trend import MACD
 from ta.volatility import AverageTrueRange, BollingerBands
 
 from models import OnChainEvent, SentimentCounts, SentimentSignal, TechnicalIndicators, TechnicalSignal, WalletScore
+from signals.symbol_mapper import map_to_binance
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ def quant_filter(
     if float(event.amount_usd) < min_trade_usd:
         return False, "below_min_trade_usd"
 
-    if f"{event.token_symbol}/USDT" not in binance_symbols:
+    binance_symbol = map_to_binance(event.chain, event.token_address, event.token_symbol)
+    if binance_symbol not in binance_symbols:
         return False, "not_on_binance"
 
     if wallet.status != "active":

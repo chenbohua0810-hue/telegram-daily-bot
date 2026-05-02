@@ -194,6 +194,7 @@ class TradeLogger:
         result: ExecutionResult,
         snapshot: DecisionSnapshot,
     ) -> int:
+        status = _execution_status(result)
         trade_id = self.trades_repo.record_trade(
             symbol=decision.symbol,
             action=decision.action,
@@ -203,7 +204,7 @@ class TradeLogger:
             source_wallet=decision.source_wallet,
             confidence=decision.confidence,
             reasoning=decision.reasoning,
-            status="paper" if result.binance_order_id is None and result.success else "filled",
+            status=status,
             paper_trading=result.binance_order_id is None,
             binance_order_id=result.binance_order_id,
             pre_trade_mid_price=result.pre_trade_mid_price,
@@ -214,6 +215,9 @@ class TradeLogger:
         )
         linked_snapshot = replace(snapshot, trade_id=trade_id)
         self.trades_repo.record_snapshot(linked_snapshot)
+
+        if not result.success:
+            return trade_id
 
         if decision.action == "buy":
             self.trades_repo.upsert_position(
@@ -226,12 +230,45 @@ class TradeLogger:
                 )
             )
         elif decision.action == "sell":
-            self.trades_repo.remove_position(decision.symbol)
+            self._apply_sell_to_position(decision.symbol, result.filled_quantity)
 
         return trade_id
 
+    def _apply_sell_to_position(self, symbol: str, filled_quantity: Decimal) -> None:
+        current_position = _find_position(self.trades_repo, symbol)
+        if current_position is None:
+            self.trades_repo.remove_position(symbol)
+            return
+
+        remaining_quantity = current_position.quantity - filled_quantity
+        if remaining_quantity <= Decimal("0"):
+            self.trades_repo.remove_position(symbol)
+            return
+
+        self.trades_repo.upsert_position(
+            replace(current_position, quantity=remaining_quantity)
+        )
+
     def log_skip(self, event: OnChainEvent, reason: str, snapshot: DecisionSnapshot) -> None:
         self.trades_repo.record_snapshot(snapshot)
+
+
+def _execution_status(result: ExecutionResult) -> str:
+    if not result.success:
+        return "failed"
+    return "paper" if result.binance_order_id is None else "filled"
+
+
+def _find_position(trades_repo: Any, symbol: str) -> Position | None:
+    get_positions = getattr(trades_repo, "get_positions", None)
+    if get_positions is None:
+        return None
+
+    positions = get_positions()
+    for position in positions:
+        if position.symbol == symbol:
+            return position
+    return None
 
 
 # ---------------------------------------------------------------------------

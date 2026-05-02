@@ -26,6 +26,7 @@ class OnChainEvent:
     amount_token: Decimal
     amount_usd: Decimal
     raw: dict[str, Any]
+    token_address: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class OnChainEvent:
             "block_time": self.block_time.isoformat(),
             "tx_type": self.tx_type,
             "token_symbol": self.token_symbol,
+            "token_address": self.token_address,
             "amount_token": str(self.amount_token),
             "amount_usd": str(self.amount_usd),
             "raw": self.raw,
@@ -52,6 +54,7 @@ class OnChainEvent:
             amount_token=Decimal(payload["amount_token"]),
             amount_usd=Decimal(payload["amount_usd"]),
             raw=payload["raw"],
+            token_address=payload["token_address"],
         )
 
 

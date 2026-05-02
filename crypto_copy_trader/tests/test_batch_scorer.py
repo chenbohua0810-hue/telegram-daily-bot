@@ -40,6 +40,7 @@ def build_event(*, tx_hash: str = "tx-1", symbol: str = "ETH", amount_usd: str =
         amount_token=Decimal("1"),
         amount_usd=Decimal(amount_usd),
         raw={"block_number": 100},
+        token_address="",
     )
 
 

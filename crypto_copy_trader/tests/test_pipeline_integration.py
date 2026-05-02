@@ -62,6 +62,7 @@ def build_event(
         amount_token=Decimal("5"),
         amount_usd=Decimal(amount_usd),
         raw={"block_number": 100},
+        token_address="",
     )
 
 

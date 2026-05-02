@@ -47,6 +47,7 @@ def build_event(*, tx_hash: str, block_number: int) -> OnChainEvent:
         amount_token=Decimal("1"),
         amount_usd=Decimal("2000"),
         raw={"block_number": block_number},
+        token_address="",
     )
 
 

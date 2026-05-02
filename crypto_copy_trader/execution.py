@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any, Callable
 
 import ccxt
 import pandas as pd
 
-from models import Portfolio, TradeDecision
+from models import Portfolio, Position, TradeDecision
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +98,13 @@ class ExecutionResult:
     error: str | None
 
 
+@dataclass(frozen=True)
+class SymbolFilters:
+    step_size: Decimal
+    tick_size: Decimal
+    min_notional: Decimal
+
+
 class BinanceExecutor:
     def __init__(
         self,
@@ -116,10 +123,16 @@ class BinanceExecutor:
         self.trades_repo = trades_repo
         self.record_trades = record_trades
         self._markets: set[str] = set()
+        self._symbol_filters: dict[str, SymbolFilters] = {}
 
     async def load_markets(self) -> set[str]:
         markets = await self.exchange.load_markets()
         self._markets = {symbol for symbol in markets if symbol.endswith("/USDT")}
+        self._symbol_filters = {
+            symbol: _extract_symbol_filters(market)
+            for symbol, market in markets.items()
+            if symbol.endswith("/USDT")
+        }
         return set(self._markets)
 
     async def fetch_price(self, symbol: str) -> Decimal:
@@ -143,12 +156,20 @@ class BinanceExecutor:
         estimated_fee_pct: float | None = None,
     ) -> ExecutionResult:
         price = await self.fetch_price(decision.symbol)
-        quantity = (Decimal(str(decision.quantity_usdt)) / price).quantize(
-            Decimal("0.00000001"),
-            rounding=ROUND_HALF_UP,
+        quantity = self._quantize_quantity(
+            decision.symbol,
+            Decimal(str(decision.quantity_usdt)) / price,
+            price,
         )
         orderbook = await self.fetch_orderbook(decision.symbol)
         pre_trade_mid_price = _mid_price(orderbook)
+        if quantity <= Decimal("0"):
+            return _failed_execution_result(
+                pre_trade_mid_price=pre_trade_mid_price,
+                estimated_slippage_pct=estimated_slippage_pct,
+                estimated_fee_pct=estimated_fee_pct,
+                error="min_notional_not_met",
+            )
 
         if self.paper_trading:
             return await self._execute_paper(
@@ -166,6 +187,99 @@ class BinanceExecutor:
             estimated_slippage_pct=estimated_slippage_pct,
             estimated_fee_pct=estimated_fee_pct,
         )
+
+    async def execute_exit(
+        self,
+        symbol: str,
+        fraction: Decimal,
+        *,
+        position: Position | None = None,
+        source_wallet: str = "",
+        reason: str = "mirror_exit",
+    ) -> ExecutionResult:
+        if not Decimal("0") < fraction <= Decimal("1"):
+            raise ValueError("fraction must be greater than 0 and less than or equal to 1")
+
+        exit_position = position or self._find_position(symbol)
+        if exit_position is None:
+            return ExecutionResult(
+                success=False,
+                filled_quantity=Decimal("0"),
+                avg_price=Decimal("0"),
+                fee_usdt=Decimal("0"),
+                pre_trade_mid_price=Decimal("0"),
+                estimated_slippage_pct=None,
+                realized_slippage_pct=None,
+                estimated_fee_pct=None,
+                realized_fee_pct=None,
+                binance_order_id=None,
+                error="position_not_found",
+            )
+
+        orderbook = await self.fetch_orderbook(symbol)
+        pre_trade_mid_price = _mid_price(orderbook)
+        quantity = self._quantize_quantity(
+            symbol,
+            exit_position.quantity * fraction,
+            pre_trade_mid_price,
+        )
+        if quantity <= Decimal("0"):
+            return _failed_execution_result(
+                pre_trade_mid_price=pre_trade_mid_price,
+                estimated_slippage_pct=None,
+                estimated_fee_pct=None,
+                error="min_notional_not_met",
+            )
+        decision = TradeDecision(
+            action="sell",
+            symbol=symbol,
+            quantity_usdt=float(quantity * pre_trade_mid_price),
+            confidence=100,
+            reasoning=reason[:200],
+            source_wallet=source_wallet or exit_position.source_wallet,
+        )
+
+        if self.paper_trading:
+            return await self._execute_paper(
+                decision=decision,
+                quantity=quantity,
+                pre_trade_mid_price=pre_trade_mid_price,
+                estimated_slippage_pct=None,
+                estimated_fee_pct=None,
+            )
+
+        return await self._execute_live(
+            decision=decision,
+            quantity=quantity,
+            pre_trade_mid_price=pre_trade_mid_price,
+            estimated_slippage_pct=None,
+            estimated_fee_pct=None,
+        )
+
+    def _find_position(self, symbol: str) -> Position | None:
+        if self.trades_repo is None or not hasattr(self.trades_repo, "get_positions"):
+            return None
+
+        positions = self.trades_repo.get_positions()
+        for position in positions:
+            if position.symbol == symbol:
+                return position
+        return None
+
+    def _quantize(self, symbol: str, quantity: Decimal, price: Decimal) -> tuple[Decimal, Decimal]:
+        filters = self._symbol_filters.get(symbol)
+        if filters is None:
+            return Decimal("0"), price
+
+        quantized_quantity = _round_to_step(quantity, filters.step_size)
+        quantized_price = _round_to_step(price, filters.tick_size)
+        if quantized_quantity * quantized_price < filters.min_notional:
+            return Decimal("0"), quantized_price
+        return quantized_quantity, quantized_price
+
+    def _quantize_quantity(self, symbol: str, quantity: Decimal, price: Decimal) -> Decimal:
+        quantized_quantity, _ = self._quantize(symbol, quantity, price)
+        return quantized_quantity
 
     async def fetch_portfolio(self) -> Portfolio:
         balance = await self.exchange.fetch_balance()
@@ -347,6 +461,71 @@ class BinanceExecutor:
             result = record_trade(**kwargs)
             if hasattr(result, "__await__"):
                 await result
+
+def _extract_symbol_filters(market: dict[str, Any]) -> SymbolFilters:
+    filters = _filters_by_type(market)
+    lot_size = filters.get("LOT_SIZE", {})
+    price_filter = filters.get("PRICE_FILTER", {})
+    min_notional = filters.get("MIN_NOTIONAL") or filters.get("NOTIONAL") or {}
+    return SymbolFilters(
+        step_size=_positive_decimal(lot_size.get("stepSize"), Decimal("0.00000001")),
+        tick_size=_positive_decimal(price_filter.get("tickSize"), Decimal("0.00000001")),
+        min_notional=_extract_min_notional(market, min_notional),
+    )
+
+
+def _filters_by_type(market: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    filters = market.get("info", {}).get("filters", [])
+    return {
+        str(item.get("filterType")): item
+        for item in filters
+        if isinstance(item, dict) and item.get("filterType") is not None
+    }
+
+
+def _extract_min_notional(market: dict[str, Any], filter_data: dict[str, Any]) -> Decimal:
+    limits = market.get("limits", {})
+    cost_limits = limits.get("cost", {}) if isinstance(limits, dict) else {}
+    fallback = cost_limits.get("min") if isinstance(cost_limits, dict) else None
+    value = filter_data.get("minNotional") or filter_data.get("notional") or fallback
+    return _positive_decimal(value, Decimal("0"))
+
+
+def _positive_decimal(value: Any, fallback: Decimal) -> Decimal:
+    if value is None:
+        return fallback
+    parsed = Decimal(str(value))
+    if parsed <= Decimal("0"):
+        return fallback
+    return parsed
+
+
+def _round_to_step(value: Decimal, step: Decimal) -> Decimal:
+    if step <= Decimal("0"):
+        return value.quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
+    return (value // step) * step
+
+
+def _failed_execution_result(
+    *,
+    pre_trade_mid_price: Decimal,
+    estimated_slippage_pct: float | None,
+    estimated_fee_pct: float | None,
+    error: str,
+) -> ExecutionResult:
+    return ExecutionResult(
+        success=False,
+        filled_quantity=Decimal("0"),
+        avg_price=Decimal("0"),
+        fee_usdt=Decimal("0"),
+        pre_trade_mid_price=pre_trade_mid_price,
+        estimated_slippage_pct=estimated_slippage_pct,
+        realized_slippage_pct=None,
+        estimated_fee_pct=estimated_fee_pct,
+        realized_fee_pct=None,
+        binance_order_id=None,
+        error=error,
+    )
 
 
 def _mid_price(orderbook: dict) -> Decimal:
