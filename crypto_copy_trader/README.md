@@ -17,7 +17,7 @@
 │  ┌───────────────────────────────────────────────────────────────────┐  │
 │  │ Layer 2: Signal Pipeline                                          │  │
 │  │ QuantFilter → PriorityRouter → LLM Routing                        │  │
-│  │   P0: Claude direct                                               │  │
+│  │   P0: direct execution without LLM                                │  │
 │  │   P1: direct copy trade                                            │  │
 │  │   P2: BatchScorer → fallback backends                              │  │
 │  │   P3: skip                                                         │  │
@@ -92,6 +92,17 @@ python -m crypto_copy_trader.main
 - `ADDRESSES_DB_PATH`
 - `TRADES_DB_PATH`
 - `EVENTS_LOG_PATH`
+
+## WebSocket Setup
+
+ETH latency is best with WebSocket monitoring enabled. Create a free Alchemy account, copy the Ethereum mainnet WebSocket endpoint, then set:
+
+```bash
+USE_WEBSOCKET=true
+ETH_WSS_URL=wss://eth-mainnet.g.alchemy.com/v2/<your-alchemy-key>
+```
+
+When the WebSocket stream is stale for more than the heartbeat threshold (minimum 120 seconds), the runtime sends a Telegram risk alert and falls back to REST polling for that cycle.
 
 ## Paper To Live
 

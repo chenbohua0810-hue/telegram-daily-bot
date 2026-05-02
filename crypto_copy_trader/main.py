@@ -119,23 +119,18 @@ async def process_event(
         )
         builder.with_sentiment(sentiment_signal, sentiment_counts)
 
-        if priority.level == "P1":
+        if priority.level == "P0":
+            ai = AIScore(
+                confidence_score=100,
+                reasoning="P0_direct",
+                recommendation="execute",
+            )
+        elif priority.level == "P1":
             ai = AIScore(
                 confidence_score=100,
                 reasoning="P1_direct_copy_trade",
                 recommendation="execute",
             )
-        elif priority.level == "P0":
-            try:
-                ai = await score_signal(
-                    event=event,
-                    wallet=wallet,
-                    technical=technical_signal,
-                    sentiment=sentiment_signal,
-                    backend=deps.claude_backend,
-                )
-            except AIScorerError:
-                return _log_skip(event, "ai_scorer_error", builder, deps)
         else:
             try:
                 batch_result = await deps.batch_scorer.submit(
@@ -586,6 +581,7 @@ async def main() -> None:
     asyncio.create_task(position_monitor_loop(runtime.deps.executor, runtime.deps.trades_repo, runtime.deps.notifier))
     asyncio.create_task(daily_summary_loop(runtime.tracker, runtime.deps.trades_repo, runtime.deps.notifier))
     stream_iterators = [monitor.stream().__aiter__() for monitor in runtime.monitors] if runtime.deps.settings.USE_WEBSOCKET else []
+    last_websocket_event_at = datetime.now(timezone.utc)
 
     try:
         while True:
@@ -594,6 +590,14 @@ async def main() -> None:
                     stream_iterators,
                     timeout_seconds=runtime.deps.settings.POLL_INTERVAL_SECONDS,
                 )
+                if events:
+                    last_websocket_event_at = datetime.now(timezone.utc)
+                elif _websocket_stale(last_websocket_event_at, runtime.deps.settings.WS_HEARTBEAT_TIMEOUT_SECONDS):
+                    await runtime.deps.notifier.notify_risk_alert("websocket stale; falling back to REST polling")
+                    events = []
+                    for monitor in runtime.monitors:
+                        events.extend(await monitor.poll_once())
+                    last_websocket_event_at = datetime.now(timezone.utc)
             else:
                 events = []
                 for monitor in runtime.monitors:
@@ -635,6 +639,10 @@ async def _read_websocket_events_once(
             continue
         events.append(event)
     return events
+
+
+def _websocket_stale(last_event_at: datetime, heartbeat_timeout_seconds: int) -> bool:
+    return datetime.now(timezone.utc) - last_event_at > timedelta(seconds=max(heartbeat_timeout_seconds, 120))
 
 
 def _new_snapshot_builder(event: OnChainEvent, symbol: str):

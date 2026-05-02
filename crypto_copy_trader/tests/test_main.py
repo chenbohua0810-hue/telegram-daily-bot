@@ -133,7 +133,7 @@ def build_deps(tmp_path) -> PipelineDeps:
 
 
 @pytest.mark.asyncio
-async def test_p0_event_uses_claude_backend(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_p0_skips_llm_call(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     deps = build_deps(tmp_path)
     technicals = Mock(return_value=build_technicals())
     sentiment = AsyncMock(return_value=build_sentiment())
@@ -151,8 +151,8 @@ async def test_p0_event_uses_claude_backend(tmp_path, monkeypatch: pytest.Monkey
 
     technicals.assert_called_once()
     sentiment.assert_awaited_once()
-    score_signal.assert_awaited_once()
-    assert score_signal.await_args.kwargs["backend"] is deps.claude_backend
+    score_signal.assert_not_awaited()
+    deps.claude_backend.score_one.assert_not_awaited()
     deps.batch_scorer.submit.assert_not_awaited()
 
 

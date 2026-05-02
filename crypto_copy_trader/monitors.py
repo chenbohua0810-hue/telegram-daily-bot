@@ -80,6 +80,22 @@ class ChainMonitor(ABC):
 
         return events
 
+    def _active_wallet_groups(self) -> dict[str, list[Any]]:
+        high_trust: list[Any] = []
+        others: list[Any] = []
+        for wallet in self.addresses_repo.list_active(chain=self.chain):
+            if self._wallet_poll_interval_seconds(wallet) == 15:
+                high_trust.append(wallet)
+            else:
+                others.append(wallet)
+        return {"high_trust": high_trust, "others": others}
+
+    @staticmethod
+    def _wallet_poll_interval_seconds(wallet: Any) -> int:
+        is_high_trust = getattr(wallet, "trust_level", None) == "high"
+        recent_win_rate = float(getattr(wallet, "recent_win_rate", 0.0))
+        return 15 if is_high_trust and recent_win_rate >= 0.60 else 60
+
     @property
     def client(self) -> httpx.AsyncClient:
         if self._active_client is None:

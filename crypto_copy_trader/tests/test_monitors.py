@@ -237,6 +237,25 @@ async def test_eth_monitor_retry_on_5xx(tmp_path: pytest.TempPathFactory) -> Non
     assert calls["count"] == 2
 
 
+def test_high_trust_wallet_uses_15s_interval(tmp_path: pytest.TempPathFactory) -> None:
+    db_path = tmp_path / "addresses.db"
+    repo = AddressesRepo(str(db_path))
+    repo.upsert_wallet(_wallet(address="0xhigh", chain="eth", status="active"))
+    repo.upsert_wallet(
+        _wallet(address="0xmedium", chain="eth", status="active").__class__(
+            **{**_wallet(address="0xmedium", chain="eth", status="active").__dict__, "trust_level": "medium"}
+        )
+    )
+    monitor = StubMonitor(api_key="key", addresses_repo=repo, event_log=Mock())
+
+    groups = monitor._active_wallet_groups()
+
+    assert [wallet.address for wallet in groups["high_trust"]] == ["0xhigh"]
+    assert [wallet.address for wallet in groups["others"]] == ["0xmedium"]
+    assert monitor._wallet_poll_interval_seconds(groups["high_trust"][0]) == 15
+    assert monitor._wallet_poll_interval_seconds(groups["others"][0]) == 60
+
+
 @pytest.mark.asyncio
 async def test_eth_monitor_estimates_amount_usd_with_contract_mapping(tmp_path: pytest.TempPathFactory) -> None:
     db_path = tmp_path / "addresses.db"
