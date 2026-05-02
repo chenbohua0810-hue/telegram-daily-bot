@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS positions (
     quantity REAL NOT NULL,
     avg_entry_price REAL NOT NULL,
     entry_time TEXT NOT NULL,
-    source_wallet TEXT NOT NULL
+    source_wallet TEXT NOT NULL,
+    peak_price REAL
 );
 
 CREATE TABLE IF NOT EXISTS daily_pnl (
@@ -180,9 +181,20 @@ def init_trades_db(db_path: str) -> None:
 
     try:
         connection.executescript(TRADES_SCHEMA)
+        _ensure_column(connection, "positions", "peak_price", "REAL")
         connection.commit()
     finally:
         connection.close()
+
+
+def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, column_type: str) -> None:
+    columns = {
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name in columns:
+        return
+    connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
 # ---------------------------------------------------------------------------
@@ -520,13 +532,14 @@ class TradesRepo:
             connection.execute(
                 """
                 INSERT INTO positions (
-                    symbol, quantity, avg_entry_price, entry_time, source_wallet
-                ) VALUES (?, ?, ?, ?, ?)
+                    symbol, quantity, avg_entry_price, entry_time, source_wallet, peak_price
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol) DO UPDATE SET
                     quantity = excluded.quantity,
                     avg_entry_price = excluded.avg_entry_price,
                     entry_time = excluded.entry_time,
-                    source_wallet = excluded.source_wallet
+                    source_wallet = excluded.source_wallet,
+                    peak_price = excluded.peak_price
                 """,
                 (
                     pos.symbol,
@@ -534,6 +547,7 @@ class TradesRepo:
                     float(pos.avg_entry_price),
                     _serialize_datetime(pos.entry_time),
                     pos.source_wallet,
+                    None if pos.peak_price is None else float(pos.peak_price),
                 ),
             )
             connection.commit()
@@ -554,7 +568,7 @@ class TradesRepo:
 
         try:
             rows = connection.execute(
-                "SELECT symbol, quantity, avg_entry_price, entry_time, source_wallet FROM positions ORDER BY symbol ASC"
+                "SELECT symbol, quantity, avg_entry_price, entry_time, source_wallet, peak_price FROM positions ORDER BY symbol ASC"
             ).fetchall()
         finally:
             connection.close()
@@ -566,6 +580,7 @@ class TradesRepo:
                 avg_entry_price=Decimal(str(row["avg_entry_price"])),
                 entry_time=datetime.fromisoformat(row["entry_time"]),
                 source_wallet=row["source_wallet"],
+                peak_price=None if row["peak_price"] is None else Decimal(str(row["peak_price"])),
             )
             for row in rows
         ]

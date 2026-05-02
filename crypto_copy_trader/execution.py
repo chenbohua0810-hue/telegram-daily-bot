@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any, Callable
 
@@ -28,6 +28,44 @@ def compute_position_size(
     vol_adj = target_daily_vol / volatility_floor
     raw = base * vol_adj
     return Decimal(str(min(raw, float(portfolio.cash_usdt))))
+
+
+@dataclass(frozen=True)
+class StopAction:
+    symbol: str
+    fraction: Decimal
+    reason: str
+
+
+def position_stop_check(
+    position: Position,
+    current_price: Decimal,
+    btc_24h_change: float,
+    *,
+    now: datetime | None = None,
+) -> StopAction | None:
+    current_time = now or datetime.now(timezone.utc)
+    entry_price = position.avg_entry_price
+    if entry_price <= Decimal("0"):
+        return None
+
+    stop_threshold = Decimal("0.95") if btc_24h_change <= -0.10 else Decimal("0.92")
+    stop_reason = "stop_loss_-5pct_market_regime" if btc_24h_change <= -0.10 else "stop_loss_-8pct"
+    if current_price <= entry_price * stop_threshold:
+        return StopAction(symbol=position.symbol, fraction=Decimal("1"), reason=stop_reason)
+
+    peak_price = position.peak_price or max(entry_price, current_price)
+    if peak_price >= entry_price * Decimal("1.20") and current_price <= peak_price * Decimal("0.70"):
+        return StopAction(symbol=position.symbol, fraction=Decimal("1"), reason="trailing_stop")
+
+    age = current_time - position.entry_time
+    unrealized_pnl_pct = (current_price - entry_price) / entry_price
+    if age >= timedelta(days=7):
+        return StopAction(symbol=position.symbol, fraction=Decimal("1"), reason="max_hold_period")
+    if age >= timedelta(hours=48) and unrealized_pnl_pct < Decimal("0.02"):
+        return StopAction(symbol=position.symbol, fraction=Decimal("1"), reason="time_stop_no_progress")
+
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -70,6 +70,7 @@ class Position:
     avg_entry_price: Decimal
     entry_time: datetime
     source_wallet: str
+    peak_price: Decimal | None = None
 
 
 @dataclass(frozen=True)

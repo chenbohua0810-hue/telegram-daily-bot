@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -14,7 +15,7 @@ import httpx
 from telegram import Bot
 
 from config import get_settings
-from execution import BinanceExecutor, compute_position_size, check_risk
+from execution import BinanceExecutor, compute_position_size, check_risk, position_stop_check
 from models import DecisionSnapshot, OnChainEvent, TradeDecision
 from monitors import BirdeyeSolMonitor, BscMonitor, BscWebSocketMonitor, EthMonitor, EthWebSocketMonitor, SolMonitor, SolWebSocketMonitor
 from reporting import PerformanceTracker, TelegramNotifier, TradeLogger
@@ -315,6 +316,88 @@ async def process_events(
         await process_event(event, portfolio, daily_pnl, deps)
 
 
+async def position_monitor_loop(
+    executor: Any,
+    positions_repo: Any,
+    notifier: Any,
+    *,
+    poll_interval_seconds: int = 30,
+    exit_failures_path: str = "data/exit_failures.jsonl",
+) -> None:
+    while True:
+        positions = positions_repo.get_positions()
+        btc_24h_change = await _fetch_btc_24h_change(executor)
+        for position in positions:
+            async with _get_symbol_lock(position.symbol):
+                current_price = await executor.fetch_price(position.symbol)
+                peak_price = max(position.peak_price or position.avg_entry_price, current_price)
+                if peak_price != position.peak_price:
+                    positions_repo.upsert_position(replace(position, peak_price=peak_price))
+                action = position_stop_check(
+                    replace(position, peak_price=peak_price),
+                    current_price,
+                    btc_24h_change,
+                )
+                if action is None:
+                    continue
+                result = await _execute_stop_exit_with_retries(executor, position, action)
+                if result.success:
+                    await notifier.notify_risk_alert(
+                        f"[EXIT] symbol={action.symbol} fraction={action.fraction} reason={action.reason}"
+                    )
+                    continue
+                _append_exit_failure(exit_failures_path, position, action, result.error)
+                await notifier.notify_risk_alert(
+                    f"[EXIT_FAILED] symbol={action.symbol} fraction={action.fraction} reason={action.reason} error={result.error}"
+                )
+        await asyncio.sleep(poll_interval_seconds)
+
+
+async def _execute_stop_exit_with_retries(executor: Any, position: Any, action: Any) -> Any:
+    delays = (5, 10, 20)
+    last_result = None
+    for attempt_index, delay in enumerate(delays):
+        result = await executor.execute_exit(
+            action.symbol,
+            action.fraction,
+            position=position,
+            source_wallet=position.source_wallet,
+            reason=action.reason,
+        )
+        if result.success:
+            return result
+        last_result = result
+        if attempt_index < len(delays) - 1:
+            await asyncio.sleep(delay)
+    return last_result
+
+
+def _append_exit_failure(path: str, position: Any, action: Any, error: str | None) -> None:
+    failure_path = Path(path)
+    failure_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "symbol": action.symbol,
+        "fraction": str(action.fraction),
+        "reason": action.reason,
+        "source_wallet": position.source_wallet,
+        "error": error,
+    }
+    with failure_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+
+
+async def _fetch_btc_24h_change(executor: Any) -> float:
+    ohlcv = await executor.fetch_ohlcv("BTC/USDT", "1h", 25)
+    if len(ohlcv) < 2:
+        return 0.0
+    first_close = Decimal(str(ohlcv.iloc[0]["close"]))
+    last_close = Decimal(str(ohlcv.iloc[-1]["close"]))
+    if first_close <= Decimal("0"):
+        return 0.0
+    return float((last_close - first_close) / first_close)
+
+
 async def wallet_scorer_loop(wallet_scorer: WalletScorer) -> None:
     while True:
         await wallet_scorer.evaluate_all()
@@ -500,6 +583,7 @@ async def main() -> None:
     await runtime.deps.notifier.notify_risk_alert("crypto copy trader started")
 
     asyncio.create_task(wallet_scorer_loop(runtime.wallet_scorer))
+    asyncio.create_task(position_monitor_loop(runtime.deps.executor, runtime.deps.trades_repo, runtime.deps.notifier))
     asyncio.create_task(daily_summary_loop(runtime.tracker, runtime.deps.trades_repo, runtime.deps.notifier))
     stream_iterators = [monitor.stream().__aiter__() for monitor in runtime.monitors] if runtime.deps.settings.USE_WEBSOCKET else []
 
