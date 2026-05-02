@@ -150,9 +150,13 @@ async def process_event(
         ):
             return _log_skip(event, f"low_confidence:{ai.confidence_score}", builder, deps)
 
+        if symbol in portfolio.positions:
+            return _log_skip(event, "existing_position", builder, deps)
+
         base_size = compute_position_size(
             portfolio=portfolio,
             asset_volatility=ohlcv_to_volatility(technical_indicators),
+            wallet=wallet,
             max_position_pct=deps.settings.MAX_POSITION_PCT,
         )
         risk = check_risk(

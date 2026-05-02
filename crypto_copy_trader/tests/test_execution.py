@@ -12,7 +12,7 @@ import ccxt
 
 from execution import BinanceExecutor, ExecutionResult, NetworkError
 from models import Portfolio, Position
-from models import TradeDecision
+from models import TradeDecision, WalletScore
 from execution import compute_position_size
 from execution import check_risk
 
@@ -38,6 +38,25 @@ def build_position(symbol: str) -> Position:
         avg_entry_price=Decimal("100"),
         entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
         source_wallet="0xabc123",
+    )
+
+
+def build_wallet_score(
+    *,
+    trust_level: str = "high",
+    recent_win_rate: float = 0.70,
+    max_drawdown: float = 0.18,
+) -> WalletScore:
+    return WalletScore(
+        address="0xabc123",
+        chain="eth",
+        win_rate=0.70,
+        trade_count=60,
+        max_drawdown=max_drawdown,
+        funds_usd=100000.0,
+        recent_win_rate=recent_win_rate,
+        trust_level=trust_level,
+        status="active",
     )
 
 
@@ -75,6 +94,36 @@ def test_zero_vol_safe_default() -> None:
     )
 
     assert size == Decimal("4000")
+
+
+def test_high_trust_wallet_gets_6pct_base() -> None:
+    size = compute_position_size(
+        portfolio=build_portfolio(cash_usdt="5000", total_value_usdt="10000"),
+        asset_volatility=0.02,
+        wallet=build_wallet_score(),
+    )
+
+    assert size == Decimal("600.0")
+
+
+def test_low_trust_capped_at_1pct() -> None:
+    size = compute_position_size(
+        portfolio=build_portfolio(cash_usdt="5000", total_value_usdt="10000"),
+        asset_volatility=0.02,
+        wallet=build_wallet_score(trust_level="low"),
+    )
+
+    assert size == Decimal("100.0")
+
+
+def test_volatility_adjustment_capped() -> None:
+    size = compute_position_size(
+        portfolio=build_portfolio(cash_usdt="5000", total_value_usdt="10000"),
+        asset_volatility=0.001,
+        wallet=build_wallet_score(),
+    )
+
+    assert size == Decimal("900.00")
 
 
 def test_risk_ok_empty_portfolio() -> None:

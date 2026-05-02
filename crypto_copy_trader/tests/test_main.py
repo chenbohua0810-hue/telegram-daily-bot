@@ -10,7 +10,7 @@ import pytest
 
 from main import PipelineDeps, process_event
 from models import OnChainEvent
-from models import Portfolio
+from models import Portfolio, Position
 from models import SentimentCounts, SentimentSignal, TechnicalIndicators, TechnicalSignal, WalletScore
 from signals.scorer import AIScore
 from signals.router import LLMBackendError
@@ -200,6 +200,34 @@ async def test_p2_event_uses_batch_scorer(tmp_path, monkeypatch: pytest.MonkeyPa
     deps.batch_scorer.submit.assert_awaited_once()
     score_signal.assert_not_awaited()
     deps.claude_backend.score_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_existing_position_skips_new_signal(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    deps = build_deps(tmp_path)
+    existing_position = Position(
+        symbol="ETH/USDT",
+        quantity=Decimal("1"),
+        avg_entry_price=Decimal("2500"),
+        entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        source_wallet="0xabc123",
+    )
+    portfolio = Portfolio(
+        cash_usdt=Decimal("50000"),
+        positions={"ETH/USDT": existing_position},
+        total_value_usdt=Decimal("100000"),
+        daily_pnl_pct=0.0,
+    )
+    monkeypatch.setattr("main.compute_technicals", Mock(return_value=build_technicals()))
+    monkeypatch.setattr("main.compute_sentiment", AsyncMock(return_value=build_sentiment()))
+    monkeypatch.setattr("main.quant_filter", Mock(return_value=(True, "ok")))
+    monkeypatch.setattr("main.assign_priority", Mock(return_value=PriorityDecision(level="P0", reason="high_value_usd")))
+
+    await process_event(build_event(amount_usd="60000"), portfolio, 0.0, deps)
+
+    deps.trade_logger.log_skip.assert_called_once()
+    assert deps.trade_logger.log_skip.call_args.args[1] == "existing_position"
+    deps.executor.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ from typing import Any, Callable
 import ccxt
 import pandas as pd
 
-from models import Portfolio, Position, TradeDecision
+from models import Portfolio, Position, TradeDecision, WalletScore
 
 
 # ---------------------------------------------------------------------------
@@ -17,18 +17,39 @@ from models import Portfolio, Position, TradeDecision
 # ---------------------------------------------------------------------------
 
 
+TRUST_POSITION_PCT_MAP = {
+    "high": 0.06,
+    "medium": 0.03,
+    "low": 0.01,
+}
+
+
 def compute_position_size(
     *,
     portfolio: Portfolio,
     asset_volatility: float,
+    wallet: WalletScore | None = None,
     target_daily_vol: float = 0.02,
     max_position_pct: float = 0.10,
 ) -> Decimal:
-    base = float(portfolio.total_value_usdt) * max_position_pct
+    base_pct = _position_pct_for_wallet(wallet, max_position_pct)
+    base = float(portfolio.total_value_usdt) * base_pct
     volatility_floor = max(asset_volatility, 0.005)
     vol_adj = target_daily_vol / volatility_floor
+    if wallet is not None:
+        vol_adj = min(max(vol_adj, 0.5), 1.5)
     raw = base * vol_adj
     return Decimal(str(min(raw, float(portfolio.cash_usdt))))
+
+
+def _position_pct_for_wallet(wallet: WalletScore | None, default_pct: float) -> float:
+    if wallet is None:
+        return default_pct
+    if wallet.trust_level == "high" and wallet.recent_win_rate >= 0.60 and wallet.max_drawdown <= 0.20:
+        return TRUST_POSITION_PCT_MAP["high"]
+    if wallet.trust_level == "low":
+        return TRUST_POSITION_PCT_MAP["low"]
+    return TRUST_POSITION_PCT_MAP["medium"]
 
 
 @dataclass(frozen=True)
