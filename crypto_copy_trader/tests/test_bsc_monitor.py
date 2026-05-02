@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 import pytest
 
-from monitors.bsc_monitor import BscMonitor
-from storage.addresses_repo import AddressesRepo
+from monitors import BscMonitor
+from storage import AddressesRepo
 
 
 def _fixture_path(name: str) -> Path:

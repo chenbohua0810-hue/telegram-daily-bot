@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from models.events import OnChainEvent
-from models.signals import WalletScore
-from monitors.eth_ws_monitor import EthWebSocketMonitor
-from storage.addresses_repo import AddressesRepo
-from storage.event_log import EventLog
+from models import OnChainEvent
+from models import WalletScore
+from monitors import EthWebSocketMonitor
+from storage import AddressesRepo
+from storage import EventLog
 
 
 class _ConnectionDropped(RuntimeError):
@@ -47,6 +47,7 @@ def build_event(*, tx_hash: str, block_number: int) -> OnChainEvent:
         amount_token=Decimal("1"),
         amount_usd=Decimal("2000"),
         raw={"block_number": block_number},
+        token_address="",
     )
 
 
@@ -92,7 +93,7 @@ async def collect_events(stream, count: int) -> list[OnChainEvent]:
 @pytest.mark.asyncio
 async def test_ws_disconnect_triggers_reconnect_with_backoff(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     sleep_mock = AsyncMock(return_value=None)
-    monkeypatch.setattr("monitors.base.asyncio.sleep", sleep_mock)
+    monkeypatch.setattr("monitors.asyncio.sleep", sleep_mock)
 
     rest_monitor = build_rest_monitor(tmp_path, AsyncMock(return_value=[]))
     connect_factory = _ConnectFactory([
@@ -119,7 +120,7 @@ async def test_ws_disconnect_triggers_reconnect_with_backoff(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_gap_backfill_runs_after_every_reconnect(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("monitors.base.asyncio.sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr("monitors.asyncio.sleep", AsyncMock(return_value=None))
 
     backfill_event = build_event(tx_hash="tx-backfill", block_number=100)
     realtime_event = build_event(tx_hash="tx-live", block_number=101)
@@ -149,7 +150,7 @@ async def test_gap_backfill_runs_after_every_reconnect(tmp_path, monkeypatch: py
 @pytest.mark.asyncio
 async def test_heartbeat_timeout_forces_reconnect(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     real_sleep = asyncio.sleep
-    monkeypatch.setattr("monitors.base.asyncio.sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr("monitors.asyncio.sleep", AsyncMock(return_value=None))
 
     async def stalled_stream():
         await real_sleep(0.01)
@@ -176,10 +177,10 @@ async def test_heartbeat_timeout_forces_reconnect(tmp_path, monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_reconnect_attempt_logs_warning_each_time(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("monitors.base.asyncio.sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr("monitors.asyncio.sleep", AsyncMock(return_value=None))
 
     warning_mock = Mock()
-    monkeypatch.setattr("monitors.base.logger.warning", warning_mock)
+    monkeypatch.setattr("monitors.logger.warning", warning_mock)
 
     rest_monitor = build_rest_monitor(tmp_path, AsyncMock(return_value=[]))
     connect_factory = _ConnectFactory([

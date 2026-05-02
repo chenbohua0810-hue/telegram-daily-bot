@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from models.events import OnChainEvent
-from models.signals import (
+from models import OnChainEvent
+from models import (
     SentimentCounts,
     SentimentSignal,
     TechnicalIndicators,
     TechnicalSignal,
 )
-from models.snapshot import DecisionSnapshotBuilder
+from models import DecisionSnapshotBuilder
 
 
 def build_event() -> OnChainEvent:
@@ -28,6 +28,7 @@ def build_event() -> OnChainEvent:
         amount_token=Decimal("1.5"),
         amount_usd=Decimal("3000"),
         raw={"hash": "0xtxhash"},
+        token_address="",
     )
 
 

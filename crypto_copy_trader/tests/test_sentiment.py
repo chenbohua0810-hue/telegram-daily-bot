@@ -7,7 +7,7 @@ import math
 import httpx
 import pytest
 
-from signals.sentiment import combine_scores, compute_sentiment
+from signals.filters import combine_scores, compute_sentiment
 
 
 def build_post(*, hours_ago: int, positive: int, negative: int) -> dict:

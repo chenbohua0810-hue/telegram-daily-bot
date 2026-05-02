@@ -1,0 +1,20 @@
+[
+  {
+    "address": "AGWFP3vwujS1ArGa6XAyaRtgxHaekzffwsn3ZQJb4uYw",
+    "chain": "sol",
+    "decision": "watch",
+    "reason": "no historical data"
+  },
+  {
+    "address": "GFHMc9BegxJXLdHJrABxNVoPRdnmVxXiNeoUCEpgXVHw",
+    "chain": "sol",
+    "decision": "watch",
+    "reason": "no historical data"
+  },
+  {
+    "address": "MfDuWeqSHEqTFVYZ7LoexgAK9dxk7cy4DFJWjWMGVWa",
+    "chain": "sol",
+    "decision": "watch",
+    "reason": "no historical data"
+  }
+]

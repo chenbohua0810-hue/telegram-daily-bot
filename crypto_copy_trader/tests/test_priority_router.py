@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from models.events import OnChainEvent
-from models.signals import WalletScore
-from signals.priority_router import PriorityDecision, assign_priority
+from models import OnChainEvent
+from models import WalletScore
+from signals.router import PriorityDecision, assign_priority
 
 
 def build_event(amount_usd: float = 1_000.0, token_symbol: str = "ETH") -> OnChainEvent:
@@ -21,6 +21,7 @@ def build_event(amount_usd: float = 1_000.0, token_symbol: str = "ETH") -> OnCha
         amount_token=Decimal("1"),
         amount_usd=Decimal(str(amount_usd)),
         raw={},
+        token_address="",
     )
 
 

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from signals.backends.anthropic_backend import AnthropicBackend
-from signals.llm_backend import LLMBackendError, strip_markdown_fence
+from signals.router import AnthropicBackend
+from signals.router import LLMBackendError, strip_markdown_fence
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

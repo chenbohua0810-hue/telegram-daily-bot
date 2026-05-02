@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from signals.slippage_fee import CostEstimate, estimate_cost, should_reject
+from signals.filters import CostEstimate, estimate_cost, should_reject
 
 
 def test_small_order_fixed_slippage() -> None:

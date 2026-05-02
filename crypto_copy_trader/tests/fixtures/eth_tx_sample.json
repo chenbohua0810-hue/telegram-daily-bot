@@ -10,7 +10,8 @@
       "to": "0xabc123",
       "value": "1000000000000000000",
       "tokenDecimal": "18",
-      "tokenSymbol": "ETH"
+      "tokenSymbol": "ETH",
+      "contractAddress": ""
     },
     {
       "blockNumber": "102",
@@ -20,7 +21,8 @@
       "to": "0xdest",
       "value": "300000000000000000000",
       "tokenDecimal": "18",
-      "tokenSymbol": "UNI"
+      "tokenSymbol": "UNI",
+      "contractAddress": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"
     },
     {
       "blockNumber": "103",
@@ -30,7 +32,8 @@
       "to": "0xabc123",
       "value": "1000000000000000000",
       "tokenDecimal": "18",
-      "tokenSymbol": "LINK"
+      "tokenSymbol": "LINK",
+      "contractAddress": "0x514910771af9ca656af840dff83e8264ecf986ca"
     }
   ]
 }

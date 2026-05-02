@@ -9,14 +9,14 @@ import pandas as pd
 import pytest
 
 from main import PipelineDeps, process_event
-from models.events import OnChainEvent
-from models.portfolio import Portfolio
-from models.signals import SentimentCounts, SentimentSignal, TechnicalIndicators, TechnicalSignal, WalletScore
-from signals.ai_scorer import AIScore
-from signals.llm_backend import LLMBackendError
-from signals.priority_router import PriorityDecision
-from storage.addresses_repo import AddressesRepo
-from storage.trades_repo import TradesRepo
+from models import OnChainEvent
+from models import Portfolio, Position
+from models import SentimentCounts, SentimentSignal, TechnicalIndicators, TechnicalSignal, WalletScore
+from signals.scorer import AIScore
+from signals.router import LLMBackendError
+from signals.router import PriorityDecision
+from storage import AddressesRepo
+from storage import TradesRepo
 
 
 def build_wallet() -> WalletScore:
@@ -44,6 +44,7 @@ def build_event(*, tx_hash: str = "tx-happy", amount_usd: str = "15000") -> OnCh
         amount_token=Decimal("5"),
         amount_usd=Decimal(amount_usd),
         raw={"block_number": 100},
+        token_address="",
     )
 
 
@@ -132,7 +133,7 @@ def build_deps(tmp_path) -> PipelineDeps:
 
 
 @pytest.mark.asyncio
-async def test_p0_event_uses_claude_backend(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_p0_skips_llm_call(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     deps = build_deps(tmp_path)
     technicals = Mock(return_value=build_technicals())
     sentiment = AsyncMock(return_value=build_sentiment())
@@ -150,8 +151,8 @@ async def test_p0_event_uses_claude_backend(tmp_path, monkeypatch: pytest.Monkey
 
     technicals.assert_called_once()
     sentiment.assert_awaited_once()
-    score_signal.assert_awaited_once()
-    assert score_signal.await_args.kwargs["backend"] is deps.claude_backend
+    score_signal.assert_not_awaited()
+    deps.claude_backend.score_one.assert_not_awaited()
     deps.batch_scorer.submit.assert_not_awaited()
 
 
@@ -199,6 +200,34 @@ async def test_p2_event_uses_batch_scorer(tmp_path, monkeypatch: pytest.MonkeyPa
     deps.batch_scorer.submit.assert_awaited_once()
     score_signal.assert_not_awaited()
     deps.claude_backend.score_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_existing_position_skips_new_signal(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    deps = build_deps(tmp_path)
+    existing_position = Position(
+        symbol="ETH/USDT",
+        quantity=Decimal("1"),
+        avg_entry_price=Decimal("2500"),
+        entry_time=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+        source_wallet="0xabc123",
+    )
+    portfolio = Portfolio(
+        cash_usdt=Decimal("50000"),
+        positions={"ETH/USDT": existing_position},
+        total_value_usdt=Decimal("100000"),
+        daily_pnl_pct=0.0,
+    )
+    monkeypatch.setattr("main.compute_technicals", Mock(return_value=build_technicals()))
+    monkeypatch.setattr("main.compute_sentiment", AsyncMock(return_value=build_sentiment()))
+    monkeypatch.setattr("main.quant_filter", Mock(return_value=(True, "ok")))
+    monkeypatch.setattr("main.assign_priority", Mock(return_value=PriorityDecision(level="P0", reason="high_value_usd")))
+
+    await process_event(build_event(amount_usd="60000"), portfolio, 0.0, deps)
+
+    deps.trade_logger.log_skip.assert_called_once()
+    assert deps.trade_logger.log_skip.call_args.args[1] == "existing_position"
+    deps.executor.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

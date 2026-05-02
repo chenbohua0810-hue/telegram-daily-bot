@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from models.events import OnChainEvent
-from models.signals import WalletScore
-from signals.quant_filter import quant_filter
+from models import OnChainEvent
+from models import WalletScore
+from signals.filters import quant_filter
 
 
 def build_event(
@@ -25,6 +25,7 @@ def build_event(
         amount_token=Decimal("1"),
         amount_usd=amount_usd,
         raw={"block_number": 100},
+        token_address="",
     )
 
 

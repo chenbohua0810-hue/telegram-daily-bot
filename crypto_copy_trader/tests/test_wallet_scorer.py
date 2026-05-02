@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from models.signals import WalletScore
-from storage.addresses_repo import AddressesRepo
-from storage.trades_repo import TradesRepo
-from wallet_scorer.scorer import WalletScorer
+from models import WalletScore
+from storage import AddressesRepo
+from storage import TradesRepo
+from wallet_scorer import WalletScorer
 
 
 def build_wallet(
@@ -145,3 +145,48 @@ async def test_evaluate_llm_failure_falls_back_template_reasoning() -> None:
 
     assert result.decision == "keep"
     assert result.reasoning == "自動規則：keep"
+
+
+# --- BUG-2: list_evaluable_wallets returns only active/watch ---
+
+
+def test_list_evaluable_wallets_excludes_retired(tmp_path) -> None:
+    addresses_repo = AddressesRepo(str(tmp_path / "addresses.db"))
+    addresses_repo.upsert_wallet(build_wallet(address="0xactive", status="active"))
+    addresses_repo.upsert_wallet(build_wallet(address="0xwatch", status="watch"))
+    addresses_repo.upsert_wallet(build_wallet(address="0xretired", status="retired"))
+
+    results = addresses_repo.list_evaluable_wallets()
+    returned_addresses = {w.address for w in results}
+
+    assert "0xactive" in returned_addresses
+    assert "0xwatch" in returned_addresses
+    assert "0xretired" not in returned_addresses
+
+
+# --- BUG-3: consecutive loss streak with missing price data ---
+
+
+def test_trade_roi_returns_none_when_price_missing() -> None:
+    trade_no_price = {"price": "50000"}
+    assert WalletScorer._trade_roi(trade_no_price) is None
+
+
+def test_consecutive_losses_skips_trades_with_missing_price() -> None:
+    trades_repo = Mock()
+    trades_repo.recent_trades.return_value = [
+        {"source_wallet": "0xabc", "price": "48000", "pre_trade_mid_price": "50000"},  # loss
+        {"source_wallet": "0xabc", "price": "51000", "pre_trade_mid_price": None},     # unknown, skip
+        {"source_wallet": "0xabc", "price": "47000", "pre_trade_mid_price": "50000"},  # loss
+        {"source_wallet": "0xabc", "price": "55000", "pre_trade_mid_price": "50000"},  # profit → break
+    ]
+    scorer = WalletScorer(
+        addresses_repo=Mock(),
+        trades_repo=trades_repo,
+        anthropic_client=Mock(),
+        model="claude-3-5-haiku-latest",
+    )
+
+    count = scorer._count_consecutive_losses("0xabc")
+
+    assert count == 2

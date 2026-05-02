@@ -8,24 +8,24 @@ from unittest.mock import AsyncMock, Mock
 import pandas as pd
 import pytest
 
-from analysis.trade_logger import TradeLogger
-from execution.binance_executor import ExecutionResult
-from execution.risk_guard import RiskCheckResult
+from reporting import TradeLogger
+from execution import ExecutionResult
+from execution import RiskCheckResult
 from main import PipelineDeps, process_event
-from models.events import OnChainEvent
-from models.portfolio import Portfolio
-from models.signals import (
+from models import OnChainEvent
+from models import Portfolio
+from models import (
     SentimentCounts,
     SentimentSignal,
     TechnicalIndicators,
     TechnicalSignal,
     WalletScore,
 )
-from signals.ai_scorer import AIScore
-from signals.priority_router import PriorityDecision
-from signals.slippage_fee import CostEstimate
-from storage.addresses_repo import AddressesRepo
-from storage.trades_repo import TradesRepo
+from signals.scorer import AIScore
+from signals.router import PriorityDecision
+from signals.filters import CostEstimate
+from storage import AddressesRepo
+from storage import TradesRepo
 
 
 def build_wallet(
@@ -62,6 +62,7 @@ def build_event(
         amount_token=Decimal("5"),
         amount_usd=Decimal(amount_usd),
         raw={"block_number": 100},
+        token_address="",
     )
 
 
@@ -191,7 +192,7 @@ def build_deps(tmp_path, monkeypatch: pytest.MonkeyPatch) -> tuple[PipelineDeps,
             side_effect=lambda event, wallet, **kwargs: (
                 PriorityDecision(level="P3", reason="quant_filter_failed")
                 if not kwargs["quant_passed"]
-                else PriorityDecision(level="P0", reason="high_value_usd")
+                else PriorityDecision(level="P2", reason="batch_scorer")
             )
         ),
     )
@@ -253,7 +254,7 @@ async def test_pipeline_ai_scorer_below_threshold_skips(
 ) -> None:
     deps, trades_repo = build_deps(tmp_path, monkeypatch)
     deps.addresses_repo.upsert_wallet(build_wallet())
-    monkeypatch.setattr("main.score_signal", AsyncMock(return_value=build_ai_score(confidence=55)))
+    deps.batch_scorer.submit = AsyncMock(return_value=build_ai_score(confidence=55))
 
     await process_event(build_event(tx_hash="tx-low-ai"), build_portfolio(), 0.0, deps)
 
@@ -342,7 +343,7 @@ async def test_pipeline_full_run_records_history(tmp_path, monkeypatch: pytest.M
         return estimate.total_cost_pct >= 0.02
 
     monkeypatch.setattr("main.quant_filter", Mock(side_effect=quant_filter_side_effect))
-    monkeypatch.setattr("main.score_signal", AsyncMock(side_effect=ai_side_effect))
+    deps.batch_scorer.submit = AsyncMock(side_effect=ai_side_effect)
     monkeypatch.setattr("main.check_risk", Mock(side_effect=risk_side_effect))
     monkeypatch.setattr("main.estimate_cost", Mock(side_effect=cost_side_effect))
     monkeypatch.setattr("main.should_reject", Mock(side_effect=should_reject_side_effect))

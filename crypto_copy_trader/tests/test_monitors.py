@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 import pytest
 
-from models.events import OnChainEvent
-from monitors.base import ChainMonitor
-from monitors.eth_monitor import EthMonitor
-from storage.addresses_repo import AddressesRepo
+from models import OnChainEvent
+from monitors import ChainMonitor
+from monitors import EthMonitor
+from storage import AddressesRepo
 
 
 def build_event(
@@ -32,6 +32,7 @@ def build_event(
         amount_token=Decimal("1"),
         amount_usd=Decimal("2000"),
         raw={"block_number": block_number},
+        token_address="0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
     )
 
 
@@ -94,7 +95,7 @@ async def test_poll_once_logs_events(tmp_path: pytest.TempPathFactory) -> None:
 
 
 def _wallet(*, address: str, chain: str, status: str):
-    from models.signals import WalletScore
+    from models import WalletScore
 
     return WalletScore(
         address=address,
@@ -234,4 +235,66 @@ async def test_eth_monitor_retry_on_5xx(tmp_path: pytest.TempPathFactory) -> Non
 
     assert len(events) == 3
     assert calls["count"] == 2
+
+
+def test_high_trust_wallet_uses_15s_interval(tmp_path: pytest.TempPathFactory) -> None:
+    db_path = tmp_path / "addresses.db"
+    repo = AddressesRepo(str(db_path))
+    repo.upsert_wallet(_wallet(address="0xhigh", chain="eth", status="active"))
+    repo.upsert_wallet(
+        _wallet(address="0xmedium", chain="eth", status="active").__class__(
+            **{**_wallet(address="0xmedium", chain="eth", status="active").__dict__, "trust_level": "medium"}
+        )
+    )
+    monitor = StubMonitor(api_key="key", addresses_repo=repo, event_log=Mock())
+
+    groups = monitor._active_wallet_groups()
+
+    assert [wallet.address for wallet in groups["high_trust"]] == ["0xhigh"]
+    assert [wallet.address for wallet in groups["others"]] == ["0xmedium"]
+    assert monitor._wallet_poll_interval_seconds(groups["high_trust"][0]) == 15
+    assert monitor._wallet_poll_interval_seconds(groups["others"][0]) == 60
+
+
+@pytest.mark.asyncio
+async def test_eth_monitor_estimates_amount_usd_with_contract_mapping(tmp_path: pytest.TempPathFactory) -> None:
+    db_path = tmp_path / "addresses.db"
+    repo = AddressesRepo(str(db_path))
+    payload = {
+        "status": "1",
+        "message": "OK",
+        "result": [
+            {
+                "blockNumber": "101",
+                "timeStamp": "1776772800",
+                "hash": "0xweth-in",
+                "from": "0xsource",
+                "to": "0xabc123",
+                "value": "1000000000000000000",
+                "tokenDecimal": "18",
+                "tokenSymbol": "WETH",
+                "contractAddress": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            },
+        ],
+    }
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status_code=200, json=payload))
+    )
+    price_fetcher = AsyncMock(return_value=Decimal("2000"))
+    monitor = EthMonitor(
+        api_key="key",
+        addresses_repo=repo,
+        event_log=Mock(),
+        price_fetcher=price_fetcher,
+        binance_symbols={"ETH/USDT"},
+        client=client,
+    )
+
+    try:
+        events = await monitor.fetch_new_transactions("0xabc123", since_block=100)
+    finally:
+        await client.aclose()
+
+    assert events[0].amount_usd == Decimal("2000")
+    price_fetcher.assert_awaited_once_with("ETH/USDT")
 

@@ -17,4 +17,4 @@ USER appuser
 
 VOLUME /app/data
 
-CMD ["python", "-m", "crypto_copy_trader.main"]
+CMD ["python", "main.py"]

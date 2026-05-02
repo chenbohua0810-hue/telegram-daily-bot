@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from signals.backends.fallback_backend import FallbackBackend
-from signals.llm_backend import LLMBackendError
+from signals.router import FallbackBackend
+from signals.router import LLMBackendError
 
 
 class _OkBackend:

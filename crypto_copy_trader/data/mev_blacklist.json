@@ -1,0 +1,114 @@
+{
+  "_meta": {
+    "description": "Known MEV bots, sandwich attackers, JIT liquidity bots, and high-frequency arbitrage wallets. These wallets have ZERO copy-trading alpha — their PnL comes from front-running, not market direction. Filter them out at the monitor layer.",
+    "version": "1.0",
+    "last_updated_utc": "2026-05-02",
+    "policy": {
+      "on_match": "Set OnChainEvent.is_mev_suspect=True. Score 0 confidence. Skip routing.",
+      "on_unknown_high_frequency": "If wallet does >100 swaps in 24h, flag as 'mev_candidate' and downgrade trust one tier. After 3 such flags within 7 days, auto-retire."
+    },
+    "data_sources_to_extend_from": [
+      "https://www.eigenphi.io/mev/leaderboard",
+      "https://libmev.com/leaderboard",
+      "https://etherscan.io/accounts/label/mev-bot",
+      "https://github.com/flashbots/mev-inspect-py (public dataset)",
+      "https://dune.com/queries (search 'MEV bot' or 'sandwich')"
+    ],
+    "address_format": {
+      "eth": "lowercase 0x... (40 hex chars)",
+      "bsc": "lowercase 0x... (40 hex chars)",
+      "sol": "case-sensitive base58 mint/account address"
+    },
+    "important_notes": [
+      "This is a STARTER list. The user MUST extend it monthly from the data sources above — new MEV bots appear daily.",
+      "Some entries are bot operator wallets (EOA), some are bot smart contracts. Both should be blacklisted because copy-trading either is meaningless.",
+      "Solana MEV runs differently (no public mempool) — fewer known operators, but Jito bundle searchers and known JIT bots should be added once identified.",
+      "If a wallet you currently track appears in this list, your scoring upstream is broken. Investigate before merging it in."
+    ],
+    "schema": {
+      "address": "lowercase hex / case-preserved base58",
+      "label": "human-readable identifier",
+      "category": "sandwich | jit_liquidity | arbitrage | searcher | mev_relay | unknown_mev",
+      "confidence": "high | medium | low (high = publicly verified, medium = strong heuristic, low = suspected only)",
+      "source": "where this attribution came from"
+    }
+  },
+
+  "eth": [
+    {
+      "address": "0x6b75d8af000000e20b7a7ddf000ba900b4009a80",
+      "label": "jaredfromsubway.eth (primary)",
+      "category": "sandwich",
+      "confidence": "high",
+      "source": "Public attribution, widely documented in 2023-2024 MEV reports"
+    },
+    {
+      "address": "0x1f2f10d1c40777ae1da742455c65828ff36df387",
+      "label": "jaredfromsubway.eth (secondary)",
+      "category": "sandwich",
+      "confidence": "high",
+      "source": "Etherscan label"
+    },
+    {
+      "address": "0x000000000035b5e5ad9019092c665357240f594e",
+      "label": "MEV Bot (high-volume sandwich)",
+      "category": "sandwich",
+      "confidence": "high",
+      "source": "EigenPhi leaderboard repeated entries"
+    },
+    {
+      "address": "0xa69babef1ca67a37ffaf7a485dfff3382056e78c",
+      "label": "MEV Bot",
+      "category": "sandwich",
+      "confidence": "high",
+      "source": "Etherscan MEV label"
+    },
+    {
+      "address": "0x00000000003b3cc22af3ae1eac0440bcee416b40",
+      "label": "MEV Bot Contract",
+      "category": "arbitrage",
+      "confidence": "medium",
+      "source": "Vanity prefix 0x00.. typical MEV deploy pattern"
+    },
+    {
+      "address": "0xae2fc483527b8ef99eb5d9b44875f005ba1fae13",
+      "label": "MEV Bot",
+      "category": "arbitrage",
+      "confidence": "medium",
+      "source": "Public sandwich attribution"
+    }
+  ],
+
+  "bsc": [
+    {
+      "address": "0x0000000000a84d1a9b0063a910315c7ffa9cd248",
+      "label": "BSC MEV Bot (high-volume)",
+      "category": "sandwich",
+      "confidence": "medium",
+      "source": "BscScan MEV label, vanity prefix pattern"
+    }
+  ],
+
+  "sol": [
+    {
+      "address": "GDDMwNyyx8uB6zrqwBFHjLLG3TBYk2F8Az4yrQC5RzMp",
+      "label": "Solana JIT Liquidity Bot (Jito searcher)",
+      "category": "jit_liquidity",
+      "confidence": "low",
+      "source": "Suspected — verify via Jito bundle data before relying"
+    }
+  ],
+
+  "_known_relays_and_infrastructure_not_blacklisted_but_flag": {
+    "description": "These are MEV infrastructure (relays, builders, multisigs) that should NOT be copy-traded but are NOT necessarily malicious. They appear in tx flows but are pass-through.",
+    "eth": [
+      {"address": "0x1f9090aae28b8a3dceadf281b0f12828e676c326", "label": "rsync-builder.eth (block builder)"},
+      {"address": "0x9008d19f58aabd9ed0d60971565aa8510560ab41", "label": "CoW Protocol settlement"},
+      {"address": "0x1111111254eeb25477b68fb85ed929f73a960582", "label": "1inch Aggregator v5"},
+      {"address": "0xdef1c0ded9bec7f1a1670819833240f027b25eff", "label": "0x Exchange Proxy"},
+      {"address": "0xe592427a0aece92de3edee1f18e0157c05861564", "label": "Uniswap V3 SwapRouter"},
+      {"address": "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45", "label": "Uniswap Universal Router"}
+    ],
+    "policy": "If a tracked wallet IS one of these, the scoring layer broke. If a tracked wallet INTERACTS WITH these (typical), no action needed — it's just routing."
+  }
+}

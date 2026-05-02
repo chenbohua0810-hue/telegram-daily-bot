@@ -8,14 +8,14 @@ from types import SimpleNamespace
 import pytest
 from freezegun import freeze_time
 
-from models.events import OnChainEvent
-from models.portfolio import Position
-from models.signals import WalletScore
-from models.snapshot import DecisionSnapshotBuilder
-from storage.addresses_repo import AddressesRepo
-from storage.db import get_connection, init_addresses_db, init_trades_db
-from storage.event_log import EventLog
-from storage.trades_repo import TradesRepo
+from models import OnChainEvent
+from models import Position
+from models import WalletScore
+from models import DecisionSnapshotBuilder
+from storage import AddressesRepo
+from storage import get_connection, init_addresses_db, init_trades_db
+from storage import EventLog
+from storage import TradesRepo
 
 
 def build_wallet_score(
@@ -59,6 +59,7 @@ def build_event(
         amount_token=Decimal("1.5"),
         amount_usd=Decimal("3000"),
         raw={"hash": tx_hash},
+        token_address="",
     )
 
 

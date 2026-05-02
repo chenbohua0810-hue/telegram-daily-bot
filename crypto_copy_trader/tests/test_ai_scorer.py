@@ -5,10 +5,10 @@ from decimal import Decimal
 
 import pytest
 
-from models.events import OnChainEvent
-from models.signals import SentimentSignal, TechnicalSignal, WalletScore
-from signals.ai_scorer import AIScorerError, score_signal
-from signals.llm_backend import LLMBackendError
+from models import OnChainEvent
+from models import SentimentSignal, TechnicalSignal, WalletScore
+from signals.scorer import AIScorerError, score_signal
+from signals.router import LLMBackendError
 
 
 def build_event() -> OnChainEvent:
@@ -22,6 +22,7 @@ def build_event() -> OnChainEvent:
         amount_token=Decimal("1"),
         amount_usd=Decimal("2000"),
         raw={"block_number": 100},
+        token_address="",
     )
 
 

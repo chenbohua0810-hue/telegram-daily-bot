@@ -6,10 +6,10 @@ from decimal import Decimal
 
 import pytest
 
-from models.events import OnChainEvent
-from models.signals import SentimentSignal, TechnicalSignal, WalletScore
-from signals.ai_scorer import AIScore
-from signals.llm_backend import LLMBackendError
+from models import OnChainEvent
+from models import SentimentSignal, TechnicalSignal, WalletScore
+from signals.scorer import AIScore
+from signals.router import LLMBackendError
 
 
 class RecordingBackend:
@@ -40,6 +40,7 @@ def build_event(*, tx_hash: str = "tx-1", symbol: str = "ETH", amount_usd: str =
         amount_token=Decimal("1"),
         amount_usd=Decimal(amount_usd),
         raw={"block_number": 100},
+        token_address="",
     )
 
 
@@ -73,7 +74,7 @@ def build_sentiment() -> SentimentSignal:
 
 @pytest.mark.asyncio
 async def test_batch_scorer_flushes_when_reaching_max_batch_size() -> None:
-    from signals.batch_scorer import BatchScorer
+    from signals.scorer import BatchScorer
 
     backend = RecordingBackend(
         responses=[
@@ -108,7 +109,7 @@ async def test_batch_scorer_flushes_when_reaching_max_batch_size() -> None:
 
 @pytest.mark.asyncio
 async def test_batch_scorer_flushes_on_window_timeout() -> None:
-    from signals.batch_scorer import BatchScorer
+    from signals.scorer import BatchScorer
 
     backend = RecordingBackend(
         responses=[
@@ -132,7 +133,7 @@ async def test_batch_scorer_flushes_on_window_timeout() -> None:
 
 @pytest.mark.asyncio
 async def test_batch_scorer_resolves_futures_by_response_index() -> None:
-    from signals.batch_scorer import BatchScorer
+    from signals.scorer import BatchScorer
 
     backend = RecordingBackend(
         responses=[
@@ -163,7 +164,7 @@ async def test_batch_scorer_resolves_futures_by_response_index() -> None:
 
 @pytest.mark.asyncio
 async def test_batch_scorer_wrong_length_response_raises_and_sets_future_errors() -> None:
-    from signals.batch_scorer import BatchScorer
+    from signals.scorer import BatchScorer
 
     backend = RecordingBackend(
         responses=[
@@ -196,7 +197,7 @@ async def test_batch_scorer_wrong_length_response_raises_and_sets_future_errors(
 
 @pytest.mark.asyncio
 async def test_batch_scorer_splits_batches_when_prompt_token_estimate_overflows() -> None:
-    from signals.batch_scorer import BatchScorer
+    from signals.scorer import BatchScorer
 
     backend = RecordingBackend(
         responses=[

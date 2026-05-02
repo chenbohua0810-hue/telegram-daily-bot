@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from signals.backends.openai_compat_backend import OpenAICompatBackend
-from signals.llm_backend import LLMBackendError
+from signals.router import OpenAICompatBackend
+from signals.router import LLMBackendError
 
 
 def _make_response(body: dict | list, status: int = 200) -> MagicMock:

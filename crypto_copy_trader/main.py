@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -13,38 +14,19 @@ import ccxt.async_support as ccxt
 import httpx
 from telegram import Bot
 
-from analysis.performance_tracker import PerformanceTracker
-from analysis.telegram_notifier import TelegramNotifier
-from analysis.trade_logger import TradeLogger
 from config import get_settings
-from execution.binance_executor import BinanceExecutor
-from execution.position_sizer import compute_position_size
-from execution.risk_guard import check_risk
-from models.decision import TradeDecision
-from models.events import OnChainEvent
-from models.snapshot import DecisionSnapshot
-from monitors.bsc_monitor import BscMonitor
-from monitors.bsc_ws_monitor import BscWebSocketMonitor
-from monitors.eth_monitor import EthMonitor
-from monitors.eth_ws_monitor import EthWebSocketMonitor
-from monitors.sol_monitor import SolMonitor
-from monitors.sol_ws_monitor import SolWebSocketMonitor
-from signals.ai_scorer import AIScorerError, PROMPT_SYSTEM, AIScore, score_signal
-from signals.backends.anthropic_backend import AnthropicBackend
-from signals.backends.fallback_backend import FallbackBackend
-from signals.backends.openai_compat_backend import OpenAICompatBackend
-from signals.batch_scorer import BatchScorer
-from signals.llm_backend import LLMBackendError
-from signals.priority_router import assign_priority
-from signals.quant_filter import quant_filter
-from signals.sentiment import compute_sentiment
-from signals.slippage_fee import estimate_cost, should_reject
-from signals.technicals import compute_technicals, ohlcv_to_volatility
-from storage.addresses_repo import AddressesRepo
-from storage.db import init_addresses_db, init_trades_db
-from storage.event_log import EventLog
-from storage.trades_repo import TradesRepo
-from wallet_scorer.scorer import WalletScorer
+from execution import BinanceExecutor, compute_position_size, check_risk, position_stop_check
+from models import DecisionSnapshot, OnChainEvent, TradeDecision
+from monitors import BirdeyeSolMonitor, BscMonitor, BscWebSocketMonitor, EthMonitor, EthWebSocketMonitor, SolMonitor, SolWebSocketMonitor
+from reporting import PerformanceTracker, TelegramNotifier, TradeLogger, TradingControlState, build_daily_report
+from signals.exit_router import should_mirror_exit
+from signals.filters import compute_sentiment, compute_technicals, estimate_cost, ohlcv_to_volatility, quant_filter, should_reject
+from signals.router import AnthropicBackend, FallbackBackend, LLMBackendError, OpenAICompatBackend, assign_priority
+from signals.scorer import AIScore, AIScorerError, BatchScorer, PROMPT_SYSTEM, score_signal
+from signals.symbol_mapper import map_to_binance
+from signals.mev_detector import check_mev_event
+from storage import AddressesRepo, EventLog, TradesRepo, init_addresses_db, init_trades_db
+from wallet_scorer import WalletScorer
 
 
 logging.basicConfig(
@@ -53,7 +35,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 CorrelationProvider = Callable[[str, list[str]], dict[str, float]]
+_SYMBOL_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 @dataclass(frozen=True)
@@ -72,6 +56,7 @@ class PipelineDeps:
     recent_events_cache: list[OnChainEvent]
     btc_24h_vol_pct: float
     correlation_provider: CorrelationProvider
+    control_state: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -88,7 +73,20 @@ async def process_event(
     daily_pnl: float,
     deps: PipelineDeps,
 ) -> None:
-    symbol = f"{event.token_symbol}/USDT"
+    event = check_mev_event(event, recent_events=deps.recent_events_cache)
+    control_state = getattr(deps, "control_state", None)
+    if event.tx_type == "swap_in" and getattr(control_state, "is_paused", False):
+        symbol = map_to_binance(event.chain, event.token_address, event.token_symbol) or f"{event.token_symbol}/USDT"
+        return _log_skip(event, "manual_pause", _new_snapshot_builder(event, symbol), deps)
+    if event.is_mev_suspect:
+        symbol = map_to_binance(event.chain, event.token_address, event.token_symbol) or f"{event.token_symbol}/USDT"
+        return _log_skip(event, "mev_suspect", _new_snapshot_builder(event, symbol), deps)
+    if event.tx_type == "swap_out":
+        await _process_exit_event(event, portfolio, deps)
+        _append_recent_event(deps.recent_events_cache, event)
+        return
+
+    symbol = map_to_binance(event.chain, event.token_address, event.token_symbol) or f"{event.token_symbol}/USDT"
     builder = _new_snapshot_builder(event, symbol)
 
     try:
@@ -131,23 +129,18 @@ async def process_event(
         )
         builder.with_sentiment(sentiment_signal, sentiment_counts)
 
-        if priority.level == "P1":
+        if priority.level == "P0":
+            ai = AIScore(
+                confidence_score=100,
+                reasoning="P0_direct",
+                recommendation="execute",
+            )
+        elif priority.level == "P1":
             ai = AIScore(
                 confidence_score=100,
                 reasoning="P1_direct_copy_trade",
                 recommendation="execute",
             )
-        elif priority.level == "P0":
-            try:
-                ai = await score_signal(
-                    event=event,
-                    wallet=wallet,
-                    technical=technical_signal,
-                    sentiment=sentiment_signal,
-                    backend=deps.claude_backend,
-                )
-            except AIScorerError:
-                return _log_skip(event, "ai_scorer_error", builder, deps)
         else:
             try:
                 batch_result = await deps.batch_scorer.submit(
@@ -167,9 +160,13 @@ async def process_event(
         ):
             return _log_skip(event, f"low_confidence:{ai.confidence_score}", builder, deps)
 
+        if symbol in portfolio.positions:
+            return _log_skip(event, "existing_position", builder, deps)
+
         base_size = compute_position_size(
             portfolio=portfolio,
             asset_volatility=ohlcv_to_volatility(technical_indicators),
+            wallet=wallet,
             max_position_pct=deps.settings.MAX_POSITION_PCT,
         )
         risk = check_risk(
@@ -206,16 +203,116 @@ async def process_event(
             reasoning=ai.reasoning,
             source_wallet=event.wallet,
         )
-        snapshot = builder.execute(decision.action)
-        result = await deps.executor.execute(
-            decision,
-            estimated_slippage_pct=cost.slippage_pct,
-            estimated_fee_pct=cost.fee_pct,
-        )
+        async with _get_symbol_lock(symbol):
+            snapshot = builder.execute(decision.action)
+            result = await deps.executor.execute(
+                decision,
+                estimated_slippage_pct=cost.slippage_pct,
+                estimated_fee_pct=cost.fee_pct,
+            )
         deps.trade_logger.log_fill(decision, result, snapshot)
         await deps.notifier.notify_trade_fill(decision, result)
     finally:
         _append_recent_event(deps.recent_events_cache, event)
+
+
+async def _process_exit_event(event: OnChainEvent, portfolio: Any, deps: PipelineDeps) -> None:
+    symbol = map_to_binance(event.chain, event.token_address, event.token_symbol)
+    builder = _new_snapshot_builder(event, symbol or f"{event.token_symbol}/USDT")
+    if symbol is None:
+        _log_skip(event, "exit:not_on_binance", builder, deps)
+        return
+
+    async with _get_symbol_lock(symbol):
+        current_position = _find_current_position(deps.trades_repo, symbol)
+        if current_position is None and hasattr(deps.trades_repo, "get_positions"):
+            _log_skip(event, "exit:no_matching_position", builder, deps)
+            return
+        if current_position is None:
+            current_position = portfolio.positions.get(symbol)
+        if current_position is None:
+            _log_skip(event, "exit:no_matching_position", builder, deps)
+            return
+        exit_event = _with_rolling_sell_fraction(event, deps.recent_events_cache)
+        decision = should_mirror_exit(exit_event, current_position)
+        if not decision.should_exit or decision.symbol is None:
+            _log_skip(event, f"exit:{decision.reason}", builder, deps)
+            return
+
+        result = await deps.executor.execute_exit(
+            decision.symbol,
+            decision.fraction,
+            position=current_position,
+            source_wallet=event.wallet,
+            reason=decision.reason,
+        )
+
+    exit_trade = TradeDecision(
+        action="sell",
+        symbol=decision.symbol,
+        quantity_usdt=float(current_position.quantity * current_position.avg_entry_price * decision.fraction),
+        confidence=100,
+        reasoning=decision.reason,
+        source_wallet=event.wallet,
+    )
+    snapshot = builder.execute("sell")
+    deps.trade_logger.log_fill(exit_trade, result, snapshot)
+    notifier = getattr(deps.notifier, "notify_risk_alert", None)
+    if notifier is not None and result.success:
+        await notifier(f"[EXIT] symbol={decision.symbol} fraction={decision.fraction} reason={decision.reason}")
+    elif notifier is not None:
+        await notifier(f"[EXIT_FAILED] symbol={decision.symbol} fraction={decision.fraction} reason={decision.reason} error={result.error}")
+
+
+def _get_symbol_lock(symbol: str) -> asyncio.Lock:
+    lock = _SYMBOL_LOCKS.get(symbol)
+    if lock is not None:
+        return lock
+
+    new_lock = asyncio.Lock()
+    _SYMBOL_LOCKS[symbol] = new_lock
+    return new_lock
+
+
+def _find_current_position(trades_repo: Any, symbol: str) -> Any | None:
+    get_positions = getattr(trades_repo, "get_positions", None)
+    if get_positions is None:
+        return None
+
+    positions = get_positions()
+    for position in positions:
+        if position.symbol == symbol:
+            return position
+    return None
+
+
+def _with_rolling_sell_fraction(event: OnChainEvent, recent_events: list[OnChainEvent]) -> OnChainEvent:
+    balance_before = event.raw.get("wallet_token_balance_before")
+    if balance_before is None:
+        return event
+
+    symbol = map_to_binance(event.chain, event.token_address, event.token_symbol)
+    cutoff = event.block_time - timedelta(minutes=30)
+    rolling_amount = event.amount_token
+    for recent_event in recent_events:
+        recent_symbol = map_to_binance(
+            recent_event.chain,
+            recent_event.token_address,
+            recent_event.token_symbol,
+        )
+        is_same_window = cutoff <= recent_event.block_time <= event.block_time
+        is_same_exit = recent_event.tx_type == "swap_out" and recent_event.wallet == event.wallet
+        if is_same_window and is_same_exit and recent_symbol == symbol:
+            rolling_amount += recent_event.amount_token
+
+    balance = Decimal(str(balance_before))
+    if balance <= Decimal("0"):
+        return event
+
+    return replace(
+        event,
+        raw={**event.raw, "rolling_sold_fraction": str(rolling_amount / balance)},
+    )
 
 
 async def process_events(
@@ -226,6 +323,88 @@ async def process_events(
 ) -> None:
     for event in events:
         await process_event(event, portfolio, daily_pnl, deps)
+
+
+async def position_monitor_loop(
+    executor: Any,
+    positions_repo: Any,
+    notifier: Any,
+    *,
+    poll_interval_seconds: int = 30,
+    exit_failures_path: str = "data/exit_failures.jsonl",
+) -> None:
+    while True:
+        positions = positions_repo.get_positions()
+        btc_24h_change = await _fetch_btc_24h_change(executor)
+        for position in positions:
+            async with _get_symbol_lock(position.symbol):
+                current_price = await executor.fetch_price(position.symbol)
+                peak_price = max(position.peak_price or position.avg_entry_price, current_price)
+                if peak_price != position.peak_price:
+                    positions_repo.upsert_position(replace(position, peak_price=peak_price))
+                action = position_stop_check(
+                    replace(position, peak_price=peak_price),
+                    current_price,
+                    btc_24h_change,
+                )
+                if action is None:
+                    continue
+                result = await _execute_stop_exit_with_retries(executor, position, action)
+                if result.success:
+                    await notifier.notify_risk_alert(
+                        f"[EXIT] symbol={action.symbol} fraction={action.fraction} reason={action.reason}"
+                    )
+                    continue
+                _append_exit_failure(exit_failures_path, position, action, result.error)
+                await notifier.notify_risk_alert(
+                    f"[EXIT_FAILED] symbol={action.symbol} fraction={action.fraction} reason={action.reason} error={result.error}"
+                )
+        await asyncio.sleep(poll_interval_seconds)
+
+
+async def _execute_stop_exit_with_retries(executor: Any, position: Any, action: Any) -> Any:
+    delays = (5, 10, 20)
+    last_result = None
+    for attempt_index, delay in enumerate(delays):
+        result = await executor.execute_exit(
+            action.symbol,
+            action.fraction,
+            position=position,
+            source_wallet=position.source_wallet,
+            reason=action.reason,
+        )
+        if result.success:
+            return result
+        last_result = result
+        if attempt_index < len(delays) - 1:
+            await asyncio.sleep(delay)
+    return last_result
+
+
+def _append_exit_failure(path: str, position: Any, action: Any, error: str | None) -> None:
+    failure_path = Path(path)
+    failure_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "symbol": action.symbol,
+        "fraction": str(action.fraction),
+        "reason": action.reason,
+        "source_wallet": position.source_wallet,
+        "error": error,
+    }
+    with failure_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
+
+
+async def _fetch_btc_24h_change(executor: Any) -> float:
+    ohlcv = await executor.fetch_ohlcv("BTC/USDT", "1h", 25)
+    if len(ohlcv) < 2:
+        return 0.0
+    first_close = Decimal(str(ohlcv.iloc[0]["close"]))
+    last_close = Decimal(str(ohlcv.iloc[-1]["close"]))
+    if first_close <= Decimal("0"):
+        return 0.0
+    return float((last_close - first_close) / first_close)
 
 
 async def wallet_scorer_loop(wallet_scorer: WalletScorer) -> None:
@@ -243,12 +422,20 @@ async def daily_summary_loop(tracker: PerformanceTracker, trades_repo: TradesRep
         ]
         win_rate = 0.0 if not trades else len(win_trades) / len(trades)
         today = datetime.now(timezone.utc).date().isoformat()
-        await notifier.notify_daily_summary(
-            today,
-            total_trades=len(trades),
-            win_rate=win_rate,
-            pnl_pct=tracker.daily_pnl_pct(today),
+        report = build_daily_report(
+            date=today,
+            portfolio_value=Decimal(str((trades_repo.get_daily_pnl(today) or {}).get("starting_equity_usdt", 0))),
+            portfolio_delta_pct=tracker.daily_pnl_pct(today),
+            portfolio_7d_delta_pct=0.0,
+            trades_repo=trades_repo,
+            health={"ws_uptime_pct": 0.0, "llm_fallback_rate": 0.0, "api_rate_limit_hits": 0},
         )
+        send = getattr(notifier, "_send", None)
+        if send is not None:
+            escape = getattr(notifier, "_escape", lambda value: value)
+            await send(escape(report))
+        else:
+            await notifier.notify_daily_summary(today, total_trades=len(trades), win_rate=win_rate, pnl_pct=tracker.daily_pnl_pct(today))
 
 
 async def build_runtime() -> Runtime:
@@ -284,6 +471,7 @@ async def build_runtime() -> Runtime:
         bot=Bot(token=settings.TELEGRAM_BOT_TOKEN),
     )
     await notifier.initialize()
+    control_state = TradingControlState()
     tracker = PerformanceTracker(trades_repo)
     trade_logger = TradeLogger(trades_repo)
     anthropic_client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -342,24 +530,29 @@ async def build_runtime() -> Runtime:
         recent_events_cache=[],
         btc_24h_vol_pct=btc_24h_vol_pct,
         correlation_provider=lambda new_symbol, existing_symbols: {},
+        control_state=control_state,
     )
-    rest_monitors = [
-        EthMonitor(
-            settings.ETHERSCAN_API_KEY,
+    eth_rest = EthMonitor(
+        settings.ETHERSCAN_API_KEY,
+        addresses_repo,
+        event_log,
+        price_fetcher=executor.fetch_price,
+        binance_symbols=binance_symbols,
+        client=shared_http,
+    )
+    if settings.BIRDEYE_API_KEY:
+        sol_rest = BirdeyeSolMonitor(
+            settings.BIRDEYE_API_KEY,
             addresses_repo,
             event_log,
             price_fetcher=executor.fetch_price,
             binance_symbols=binance_symbols,
             client=shared_http,
-        ),
-        SolMonitor(
-            settings.SOLSCAN_API_KEY,
-            addresses_repo,
-            event_log,
-            price_fetcher=executor.fetch_price,
-            binance_symbols=binance_symbols,
-            client=shared_http,
-        ),
+        )
+    else:
+        sol_rest = None
+        logger.warning("BIRDEYE_API_KEY not set — SOL monitoring disabled")
+    bsc_rest = (
         BscMonitor(
             settings.BSCSCAN_API_KEY,
             addresses_repo,
@@ -367,31 +560,41 @@ async def build_runtime() -> Runtime:
             price_fetcher=executor.fetch_price,
             binance_symbols=binance_symbols,
             client=shared_http,
-        ),
-    ]
+        )
+        if settings.BSCSCAN_API_KEY
+        else None
+    )
+    rest_monitors = [m for m in [eth_rest, sol_rest, bsc_rest] if m is not None]
     if settings.USE_WEBSOCKET:
-        monitors = [
+        monitors: list = [
             EthWebSocketMonitor(
-                rest_monitor=rest_monitors[0],
+                rest_monitor=eth_rest,
                 ws_url=settings.ETH_WSS_URL,
                 heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
                 reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
             ),
-            SolWebSocketMonitor(
-                rest_monitor=rest_monitors[1],
-                ws_url=settings.SOL_WSS_URL,
-                heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
-                reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
-            ),
-            BscWebSocketMonitor(
-                rest_monitor=rest_monitors[2],
-                ws_url=settings.BSC_WSS_URL,
-                heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
-                reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
-            ),
         ]
+        if sol_rest is not None:
+            monitors.append(
+                SolWebSocketMonitor(
+                    rest_monitor=sol_rest,
+                    ws_url=settings.SOL_WSS_URL,
+                    heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
+                    reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
+                )
+            )
+        if bsc_rest is not None:
+            monitors.append(
+                BscWebSocketMonitor(
+                    rest_monitor=bsc_rest,
+                    ws_url=settings.BSC_WSS_URL,
+                    heartbeat_timeout_seconds=settings.WS_HEARTBEAT_TIMEOUT_SECONDS,
+                    reconnect_backoff_cap_seconds=settings.WS_RECONNECT_BACKOFF_CAP_SECONDS,
+                )
+            )
     else:
         monitors = rest_monitors
+    notifier.start_command_listener(control_state=control_state, executor=executor, trades_repo=trades_repo)
     return Runtime(deps=deps, tracker=tracker, wallet_scorer=wallet_scorer, monitors=monitors)
 
 
@@ -400,8 +603,10 @@ async def main() -> None:
     await runtime.deps.notifier.notify_risk_alert("crypto copy trader started")
 
     asyncio.create_task(wallet_scorer_loop(runtime.wallet_scorer))
+    asyncio.create_task(position_monitor_loop(runtime.deps.executor, runtime.deps.trades_repo, runtime.deps.notifier))
     asyncio.create_task(daily_summary_loop(runtime.tracker, runtime.deps.trades_repo, runtime.deps.notifier))
     stream_iterators = [monitor.stream().__aiter__() for monitor in runtime.monitors] if runtime.deps.settings.USE_WEBSOCKET else []
+    last_websocket_event_at = datetime.now(timezone.utc)
 
     try:
         while True:
@@ -410,6 +615,14 @@ async def main() -> None:
                     stream_iterators,
                     timeout_seconds=runtime.deps.settings.POLL_INTERVAL_SECONDS,
                 )
+                if events:
+                    last_websocket_event_at = datetime.now(timezone.utc)
+                elif _websocket_stale(last_websocket_event_at, runtime.deps.settings.WS_HEARTBEAT_TIMEOUT_SECONDS):
+                    await runtime.deps.notifier.notify_risk_alert("websocket stale; falling back to REST polling")
+                    events = []
+                    for monitor in runtime.monitors:
+                        events.extend(await monitor.poll_once())
+                    last_websocket_event_at = datetime.now(timezone.utc)
             else:
                 events = []
                 for monitor in runtime.monitors:
@@ -433,6 +646,9 @@ async def main() -> None:
         await runtime.deps.batch_scorer.flush()
         await runtime.deps.http.aclose()
         await runtime.deps.executor.exchange.close()
+        notifier_close = getattr(runtime.deps.notifier, "aclose", None)
+        if notifier_close is not None:
+            await notifier_close()
 
 
 async def _read_websocket_events_once(
@@ -450,8 +666,12 @@ async def _read_websocket_events_once(
     return events
 
 
+def _websocket_stale(last_event_at: datetime, heartbeat_timeout_seconds: int) -> bool:
+    return datetime.now(timezone.utc) - last_event_at > timedelta(seconds=max(heartbeat_timeout_seconds, 120))
+
+
 def _new_snapshot_builder(event: OnChainEvent, symbol: str):
-    from models.snapshot import DecisionSnapshotBuilder
+    from models import DecisionSnapshotBuilder
 
     return DecisionSnapshotBuilder(
         event=event,

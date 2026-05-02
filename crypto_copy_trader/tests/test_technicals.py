@@ -4,8 +4,8 @@ import math
 
 import pandas as pd
 
-from models.signals import TechnicalIndicators
-from signals.technicals import compute_technicals, ohlcv_to_volatility
+from models import TechnicalIndicators
+from signals.filters import compute_technicals, ohlcv_to_volatility
 
 
 def build_ohlcv(closes: list[float]) -> pd.DataFrame:

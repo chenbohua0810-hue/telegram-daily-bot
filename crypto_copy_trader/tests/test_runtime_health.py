@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 from freezegun import freeze_time
 
-from models.events import OnChainEvent
-from models.signals import WalletScore
-from models.snapshot import DecisionSnapshotBuilder
-from storage.addresses_repo import AddressesRepo
-from storage.event_log import EventLog
-from storage.trades_repo import TradesRepo
-from verification.runtime_health import build_runtime_health_report
+from models import OnChainEvent
+from models import WalletScore
+from models import DecisionSnapshotBuilder
+from storage import AddressesRepo
+from storage import EventLog
+from storage import TradesRepo
+from reporting import build_runtime_health_report, _average_trade_metric
 
 
 def build_wallet_score(*, address: str = "0xabc123") -> WalletScore:
@@ -40,6 +40,7 @@ def build_event(*, tx_hash: str = "0xtxhash") -> OnChainEvent:
         amount_token=Decimal("1.5"),
         amount_usd=Decimal("3000"),
         raw={"hash": tx_hash},
+        token_address="",
     )
 
 
@@ -140,3 +141,29 @@ def test_build_runtime_health_report_summarizes_runtime_artifacts(tmp_path) -> N
     assert report.backend_fallback_rate == 0.25
     assert report.batch_flush_latency_ms == 18.5
     assert report.ws_reconnect_count == {"eth": 2, "sol": 1}
+
+
+# --- BUG-4: filled trades counted in realized_slippage_pct ---
+
+
+def test_average_trade_metric_includes_filled_trades(tmp_path) -> None:
+    trades_repo = TradesRepo(str(tmp_path / "trades.db"))
+    trades_repo.record_trade(
+        symbol="ETH/USDT",
+        action="buy",
+        quantity=Decimal("0.5"),
+        price=Decimal("3000"),
+        fee_usdt=Decimal("1.2"),
+        source_wallet="0xabc",
+        confidence=85,
+        reasoning="live",
+        status="filled",
+        paper_trading=False,
+        estimated_slippage_pct=0.001,
+        realized_slippage_pct=0.002,
+    )
+
+    result = _average_trade_metric(trades_repo, lookback_hours=24, metric_name="realized_slippage_pct")
+
+    assert result is not None
+    assert abs(result - 0.002) < 1e-9
