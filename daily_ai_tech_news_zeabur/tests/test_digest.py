@@ -47,7 +47,7 @@ def test_filter_recent_items_keeps_only_past_24_hours_and_undated_items():
         "https://example.com/undated",
     ]
 
-def test_build_digest_message_is_telegram_readable_traditional_chinese():
+def test_build_digest_message_only_sends_traditional_chinese_title_and_key_points():
     # Arrange
     today = datetime(2026, 5, 5, tzinfo=timezone(timedelta(hours=8))).date()
     items = [
@@ -64,11 +64,14 @@ def test_build_digest_message_is_telegram_readable_traditional_chinese():
     message = build_digest_message(items, today=today)
 
     # Assert
-    assert "今日 AI / 科技新聞（2026-05-05）" in message
-    assert "1. OpenAI releases new agent model" in message
-    assert "分類：[AI]" in message
-    assert "來源：AIWire https://example.com/ai" in message
-    assert "今日重點" in message
+    assert "今日 AI / 科技新聞重點（2026-05-05）" in message
+    assert "1. 標題：OpenAI releases new agent model" in message
+    assert "重點：" in message
+    assert "今日重點：" in message
+    assert "分類：" not in message
+    assert "來源：" not in message
+    assert "為什麼重要：" not in message
+    assert "https://example.com/ai" not in message
     assert len(message) < 4096
 
 

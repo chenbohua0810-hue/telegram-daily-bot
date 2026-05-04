@@ -122,7 +122,7 @@ def pick_top_items(items: list[NewsItem], *, limit: int = 5) -> list[NewsItem]:
 
 
 def build_digest_message(items: list[NewsItem], *, today: date) -> str:
-    lines = [f"今日 AI / 科技新聞（{today.isoformat()}）", ""]
+    lines = [f"今日 AI / 科技新聞重點（{today.isoformat()}）", ""]
     if not items:
         lines.extend([
             "今天沒有從公開來源取得足夠可靠的 AI / 科技新聞。",
@@ -131,14 +131,10 @@ def build_digest_message(items: list[NewsItem], *, today: date) -> str:
         return "\n".join(lines)
 
     for index, item in enumerate(items, start=1):
-        tags = _tags_for(item)
-        summary = _summary_for(item)
         lines.extend(
             [
-                f"{index}. {item.title}",
-                summary,
-                f"分類：{' '.join(tags)}",
-                f"來源：{item.source} {item.link}",
+                f"{index}. 標題：{item.title}",
+                f"重點：{_key_point_for(item)}",
                 "",
             ]
         )
@@ -146,8 +142,8 @@ def build_digest_message(items: list[NewsItem], *, today: date) -> str:
     lines.extend(
         [
             "今日重點：",
-            "AI 仍是科技新聞主軸；請特別留意模型能力、晶片供應、企業導入與監管風險之間的連動。",
-            "注意：以上摘要依公開來源整理；若來源屬預測、傳聞或未確認消息，請以原文標示與後續官方公告為準。",
+            "AI 仍是科技新聞主軸；請留意模型能力、算力供應、企業導入與監管風險的連動。",
+            "注意：本訊息依公開來源整理；未確認消息不視為事實，請以原文與官方公告為準。",
         ]
     )
     return _fit_telegram_limit("\n".join(lines))
@@ -177,12 +173,19 @@ def _tags_for(item: NewsItem) -> list[str]:
     return tags
 
 
-def _summary_for(item: NewsItem) -> str:
-    cleaned = item.summary or "這則新聞可能影響 AI / 科技產業的產品方向、企業採用或競爭格局。"
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    if len(cleaned) > 220:
-        cleaned = cleaned[:217].rstrip() + "..."
-    return f"重點：{cleaned}\n為什麼重要：它有助於判斷 AI 與科技市場今天的產品、基礎設施或監管走向。"
+def _key_point_for(item: NewsItem) -> str:
+    tags = _tags_for(item)
+    if "[AI]" in tags and "[晶片]" in tags:
+        return "這則新聞同時牽動 AI 應用與算力供應，可能影響模型服務、硬體採購與產業競爭。"
+    if "[AI]" in tags:
+        return "這則新聞與 AI 模型、產品應用或企業導入相關，值得觀察後續商業化與監管影響。"
+    if "[晶片]" in tags:
+        return "這則新聞與晶片、GPU 或半導體供應鏈相關，可能影響 AI 算力成本與科技公司布局。"
+    if "[資安]" in tags:
+        return "這則新聞與資安風險、漏洞或防護趨勢相關，可能影響企業技術決策與信任成本。"
+    if "[新創]" in tags:
+        return "這則新聞與新創、投資或市場競爭相關，可觀察資金流向與新技術落地速度。"
+    return "這則新聞可能影響科技產品方向、企業採用、基礎設施投資或市場競爭格局。"
 
 
 def _fit_telegram_limit(message: str, *, limit: int = 3900) -> str:
