@@ -6,7 +6,7 @@ import time
 from zoneinfo import ZoneInfo
 
 from .config import Config, ConfigError
-from .digest import build_digest_message, fetch_news_items, pick_top_items
+from .digest import build_digest_message, fetch_news_items, filter_recent_items, pick_top_items
 from .scheduler import next_daily_run, seconds_until
 from .telegram import send_telegram_message
 
@@ -14,7 +14,8 @@ from .telegram import send_telegram_message
 def run_once(config: Config) -> None:
     print("INFO fetching public technology news feeds", flush=True)
     items = fetch_news_items(config.rss_urls)
-    selected = pick_top_items(items, limit=config.item_limit)
+    recent_items = filter_recent_items(items, now=datetime.now(timezone.utc), hours=24)
+    selected = pick_top_items(recent_items, limit=config.item_limit)
     today = datetime.now(timezone.utc).astimezone(ZoneInfo(config.timezone_name)).date()
     message = build_digest_message(selected, today=today)
     send_telegram_message(

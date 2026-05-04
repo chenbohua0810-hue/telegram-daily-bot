@@ -7,6 +7,7 @@
 - 每天 08:00 Asia/Taipei 執行。
 - 從公開 RSS / 公開新聞來源抓取科技新聞。
 - AI 優先排序，不足時補半導體、雲端、資安、開發者工具、新創等科技新聞。
+- 過濾過去 24 小時內的新聞；若 RSS 來源沒有提供時間戳，會保留但依 AI/科技相關性排序。
 - 發送 5 則繁體中文摘要到 Telegram。
 - 不需要本機常駐。
 
@@ -41,6 +42,17 @@ ITEM_LIMIT=5
 
 如果要發到剛剛測試過的 Telegram home channel，可使用先前測試回傳的 chat_id：`7407011243`。
 Bot Token 請不要貼到聊天裡，請你自己從原本 Zeabur bot service 的 Variables 複製到這個 digest service 的 Variables。
+
+## Secrets handoff 檔案
+
+我已建立本機 secrets 範本：
+
+```text
+/Users/chenbohua/Downloads/ai_claude/daily_ai_tech_news_zeabur/secrets.env
+```
+
+請你自己用編輯器填入 `TELEGRAM_BOT_TOKEN`。不要把 token 貼到聊天裡。
+這個檔案已被 `.gitignore` 與 `.dockerignore` 排除，不會提交或打包進 Docker image。
 
 ## Zeabur 部署步驟
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import html
 import re
@@ -89,6 +89,23 @@ def _fetch_rss(url: str, *, timeout_seconds: int) -> list[NewsItem]:
             )
         )
     return parsed
+
+
+def filter_recent_items(items: list[NewsItem], *, now: datetime, hours: int = 24) -> list[NewsItem]:
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    cutoff = now.astimezone(timezone.utc) - timedelta(hours=hours)
+    recent: list[NewsItem] = []
+    for item in items:
+        if item.published_at is None:
+            recent.append(item)
+            continue
+        published_at = item.published_at
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+        if published_at.astimezone(timezone.utc) >= cutoff:
+            recent.append(item)
+    return recent
 
 
 def pick_top_items(items: list[NewsItem], *, limit: int = 5) -> list[NewsItem]:

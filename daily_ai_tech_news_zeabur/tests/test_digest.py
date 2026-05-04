@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 from daily_ai_tech_news.config import Config, ConfigError
-from daily_ai_tech_news.digest import NewsItem, build_digest_message, pick_top_items
+from daily_ai_tech_news.digest import NewsItem, build_digest_message, filter_recent_items, pick_top_items
 from daily_ai_tech_news.scheduler import next_daily_run
 
 
@@ -26,6 +26,26 @@ def test_pick_top_items_prioritizes_ai_and_deduplicates_links():
         "https://example.com/cloud",
     ]
 
+
+def test_filter_recent_items_keeps_only_past_24_hours_and_undated_items():
+    # Arrange
+    now = datetime(2026, 5, 5, 0, 0, tzinfo=timezone.utc)
+    items = [
+        NewsItem(title="Recent AI update", link="https://example.com/recent", source="AIWire", published_at=now - timedelta(hours=2), summary="Recent"),
+        NewsItem(title="Boundary chip update", link="https://example.com/boundary", source="ChipNews", published_at=now - timedelta(hours=24), summary="Boundary"),
+        NewsItem(title="Old cloud update", link="https://example.com/old", source="CloudWire", published_at=now - timedelta(hours=25), summary="Old"),
+        NewsItem(title="Undated RSS item", link="https://example.com/undated", source="RSS", published_at=None, summary="No date in feed"),
+    ]
+
+    # Act
+    recent = filter_recent_items(items, now=now, hours=24)
+
+    # Assert
+    assert [item.link for item in recent] == [
+        "https://example.com/recent",
+        "https://example.com/boundary",
+        "https://example.com/undated",
+    ]
 
 def test_build_digest_message_is_telegram_readable_traditional_chinese():
     # Arrange
