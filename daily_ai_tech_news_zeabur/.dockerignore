@@ -1,0 +1,12 @@
+.git
+.venv
+.pytest_cache
+__pycache__
+.env
+.env.*
+!.env.example
+secrets.env
+*.pyc
+.DS_Store
+tests
+uv.lock
