@@ -26,6 +26,9 @@ class Config:
     send_minute: int = 0
     item_limit: int = 5
     run_once: bool = False
+    gemini_api_key: str = ""
+    translation_model: str = "gemini-2.5-flash-lite"
+    translate_titles: bool = True
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -48,6 +51,9 @@ class Config:
             send_minute=_int_env("SEND_MINUTE", 0, minimum=0, maximum=59),
             item_limit=_int_env("ITEM_LIMIT", 5, minimum=1, maximum=10),
             run_once=os.getenv("RUN_ONCE", "").lower() in {"1", "true", "yes"},
+            gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+            translation_model=os.getenv("TRANSLATION_MODEL", "gemini-2.5-flash-lite").strip() or "gemini-2.5-flash-lite",
+            translate_titles=os.getenv("TRANSLATE_TITLES", "true").lower() not in {"0", "false", "no"},
         )
 
 

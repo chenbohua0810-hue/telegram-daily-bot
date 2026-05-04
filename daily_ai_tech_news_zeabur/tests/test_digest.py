@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 from daily_ai_tech_news.config import Config, ConfigError
-from daily_ai_tech_news.digest import NewsItem, build_digest_message, filter_recent_items, pick_top_items
+from daily_ai_tech_news.digest import DigestEntry, NewsItem, build_digest_message, enrich_news_items, filter_recent_items, pick_top_items
 from daily_ai_tech_news.scheduler import next_daily_run
 
 
@@ -47,9 +47,15 @@ def test_filter_recent_items_keeps_only_past_24_hours_and_undated_items():
         "https://example.com/undated",
     ]
 
-def test_build_digest_message_only_sends_traditional_chinese_title_and_key_points():
+def test_enrich_news_items_uses_model_output_for_traditional_chinese_title_and_article_point():
     # Arrange
-    today = datetime(2026, 5, 5, tzinfo=timezone(timedelta(hours=8))).date()
+    class FakeEnricher:
+        def enrich_item(self, item):
+            return DigestEntry(
+                title="OpenAI 發表新的代理模型",
+                key_point="新模型主打工具使用與低延遲，瞄準企業工作流程導入。",
+            )
+
     items = [
         NewsItem(
             title="OpenAI releases new agent model",
@@ -61,13 +67,35 @@ def test_build_digest_message_only_sends_traditional_chinese_title_and_key_point
     ]
 
     # Act
-    message = build_digest_message(items, today=today)
+    enriched = enrich_news_items(items, enricher=FakeEnricher())
+
+    # Assert
+    assert enriched == [
+        DigestEntry(
+            title="OpenAI 發表新的代理模型",
+            key_point="新模型主打工具使用與低延遲，瞄準企業工作流程導入。",
+        )
+    ]
+
+
+def test_build_digest_message_only_sends_traditional_chinese_title_and_article_key_points():
+    # Arrange
+    today = datetime(2026, 5, 5, tzinfo=timezone(timedelta(hours=8))).date()
+    entries = [
+        DigestEntry(
+            title="OpenAI 發表新的代理模型",
+            key_point="新模型主打工具使用與低延遲，瞄準企業工作流程導入。",
+        )
+    ]
+
+    # Act
+    message = build_digest_message(entries, today=today)
 
     # Assert
     assert "今日 AI / 科技新聞重點（2026-05-05）" in message
-    assert "1. 標題：OpenAI releases new agent model" in message
-    assert "重點：" in message
-    assert "今日重點：" in message
+    assert "1. 標題：OpenAI 發表新的代理模型" in message
+    assert "重點：新模型主打工具使用與低延遲，瞄準企業工作流程導入。" in message
+    assert "這則新聞與" not in message
     assert "分類：" not in message
     assert "來源：" not in message
     assert "為什麼重要：" not in message

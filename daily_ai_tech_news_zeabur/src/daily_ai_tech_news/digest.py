@@ -49,6 +49,12 @@ class NewsItem:
     summary: str
 
 
+@dataclass(frozen=True)
+class DigestEntry:
+    title: str
+    key_point: str
+
+
 def fetch_news_items(rss_urls: tuple[str, ...], *, timeout_seconds: int = 12) -> list[NewsItem]:
     items: list[NewsItem] = []
     for url in rss_urls:
@@ -121,20 +127,33 @@ def pick_top_items(items: list[NewsItem], *, limit: int = 5) -> list[NewsItem]:
     return sorted(deduped, key=_score_item, reverse=True)[:limit]
 
 
-def build_digest_message(items: list[NewsItem], *, today: date) -> str:
+def enrich_news_items(items: list[NewsItem], *, enricher: object | None = None) -> list[DigestEntry]:
+    entries: list[DigestEntry] = []
+    for item in items:
+        if enricher is not None:
+            try:
+                entries.append(enricher.enrich_item(item))
+                continue
+            except Exception as exc:
+                print(f"WARN failed to enrich news title with model: {exc}", flush=True)
+        entries.append(_fallback_entry_for(item))
+    return entries
+
+
+def build_digest_message(entries: list[DigestEntry], *, today: date) -> str:
     lines = [f"今日 AI / 科技新聞重點（{today.isoformat()}）", ""]
-    if not items:
+    if not entries:
         lines.extend([
             "今天沒有從公開來源取得足夠可靠的 AI / 科技新聞。",
             "建議稍後再檢查公開 RSS 或新聞來源。",
         ])
         return "\n".join(lines)
 
-    for index, item in enumerate(items, start=1):
+    for index, entry in enumerate(entries, start=1):
         lines.extend(
             [
-                f"{index}. 標題：{item.title}",
-                f"重點：{_key_point_for(item)}",
+                f"{index}. 標題：{entry.title}",
+                f"重點：{entry.key_point}",
                 "",
             ]
         )
@@ -173,19 +192,17 @@ def _tags_for(item: NewsItem) -> list[str]:
     return tags
 
 
-def _key_point_for(item: NewsItem) -> str:
-    tags = _tags_for(item)
-    if "[AI]" in tags and "[晶片]" in tags:
-        return "這則新聞同時牽動 AI 應用與算力供應，可能影響模型服務、硬體採購與產業競爭。"
-    if "[AI]" in tags:
-        return "這則新聞與 AI 模型、產品應用或企業導入相關，值得觀察後續商業化與監管影響。"
-    if "[晶片]" in tags:
-        return "這則新聞與晶片、GPU 或半導體供應鏈相關，可能影響 AI 算力成本與科技公司布局。"
-    if "[資安]" in tags:
-        return "這則新聞與資安風險、漏洞或防護趨勢相關，可能影響企業技術決策與信任成本。"
-    if "[新創]" in tags:
-        return "這則新聞與新創、投資或市場競爭相關，可觀察資金流向與新技術落地速度。"
-    return "這則新聞可能影響科技產品方向、企業採用、基礎設施投資或市場競爭格局。"
+def _fallback_entry_for(item: NewsItem) -> DigestEntry:
+    return DigestEntry(title=item.title, key_point=_article_key_point_for(item))
+
+
+def _article_key_point_for(item: NewsItem) -> str:
+    cleaned = re.sub(r"\s+", " ", item.summary or "").strip()
+    if cleaned:
+        if len(cleaned) > 90:
+            cleaned = cleaned[:87].rstrip() + "…"
+        return cleaned
+    return "公開來源沒有提供足夠摘要；請以標題判斷此新聞與今日科技動態的關聯。"
 
 
 def _fit_telegram_limit(message: str, *, limit: int = 3900) -> str:
