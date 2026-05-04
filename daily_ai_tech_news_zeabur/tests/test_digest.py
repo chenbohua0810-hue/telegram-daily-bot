@@ -138,7 +138,20 @@ def test_config_defaults_to_higher_quality_gemini_model(monkeypatch):
     config = Config.from_env()
 
     # Assert
-    assert config.translation_model == "gemini-2.5-pro"
+    assert config.translation_model == "gemini-2.5-flash"
+
+
+def test_config_upgrades_legacy_flash_lite_model(monkeypatch):
+    # Arrange
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123456")
+    monkeypatch.setenv("TRANSLATION_MODEL", "gemini-2.5-flash-lite")
+
+    # Act
+    config = Config.from_env()
+
+    # Assert
+    assert config.translation_model == "gemini-2.5-flash"
 
 
 def test_next_daily_run_uses_asia_taipei_eight_am():

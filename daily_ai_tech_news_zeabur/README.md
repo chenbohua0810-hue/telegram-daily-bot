@@ -41,7 +41,7 @@ SEND_MINUTE=0
 ITEM_LIMIT=5
 GEMINI_API_KEY=Google AI Studio Gemini API key，用於翻譯標題與生成文章實際重點
 TRANSLATE_TITLES=true
-TRANSLATION_MODEL=gemini-2.5-pro
+TRANSLATION_MODEL=gemini-2.5-flash
 ```
 
 `TELEGRAM_CHAT_ID` 請填你的 Telegram chat_id。

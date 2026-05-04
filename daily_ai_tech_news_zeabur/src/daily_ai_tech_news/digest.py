@@ -138,6 +138,12 @@ def is_ai_related(item: NewsItem) -> bool:
 
 
 def enrich_news_items(items: list[NewsItem], *, enricher: object | None = None) -> list[DigestEntry]:
+    if enricher is not None and hasattr(enricher, "enrich_items"):
+        try:
+            return list(enricher.enrich_items(items))
+        except Exception as exc:
+            print(f"WARN failed to enrich news batch with model: {exc}", flush=True)
+
     entries: list[DigestEntry] = []
     for item in items:
         if enricher is not None:
