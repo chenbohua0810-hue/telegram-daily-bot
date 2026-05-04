@@ -3,8 +3,24 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 from daily_ai_tech_news.config import Config, ConfigError
-from daily_ai_tech_news.digest import DigestEntry, NewsItem, build_digest_message, enrich_news_items, filter_recent_items, pick_top_items
+from daily_ai_tech_news.digest import DigestEntry, NewsItem, build_digest_message, enrich_news_items, filter_ai_items, filter_recent_items, pick_top_items
 from daily_ai_tech_news.scheduler import next_daily_run
+
+
+def test_filter_ai_items_keeps_only_ai_related_news():
+    # Arrange
+    items = [
+        NewsItem(title="OpenAI releases new agent model", link="https://example.com/ai", source="AIWire", published_at=None, summary="Agentic AI workflow update"),
+        NewsItem(title="Nvidia announces AI accelerator supply plan", link="https://example.com/chip", source="ChipNews", published_at=None, summary="GPU demand for model training"),
+        NewsItem(title="Cloud database pricing changes", link="https://example.com/cloud", source="CloudWire", published_at=None, summary="Cloud cost update"),
+        NewsItem(title="Apple refreshes MacBook colors", link="https://example.com/apple", source="GadgetWire", published_at=None, summary="New colors and storage tiers"),
+    ]
+
+    # Act
+    filtered = filter_ai_items(items)
+
+    # Assert
+    assert [item.link for item in filtered] == ["https://example.com/ai", "https://example.com/chip"]
 
 
 def test_pick_top_items_prioritizes_ai_and_deduplicates_links():
@@ -23,7 +39,6 @@ def test_pick_top_items_prioritizes_ai_and_deduplicates_links():
     assert [item.link for item in selected] == [
         "https://example.com/ai",
         "https://example.com/chip",
-        "https://example.com/cloud",
     ]
 
 
@@ -92,7 +107,7 @@ def test_build_digest_message_only_sends_traditional_chinese_title_and_article_k
     message = build_digest_message(entries, today=today)
 
     # Assert
-    assert "今日 AI / 科技新聞重點（2026-05-05）" in message
+    assert "今日 AI 新聞重點（2026-05-05）" in message
     assert "1. 標題：OpenAI 發表新的代理模型" in message
     assert "重點：新模型主打工具使用與低延遲，瞄準企業工作流程導入。" in message
     assert "這則新聞與" not in message
@@ -111,6 +126,19 @@ def test_config_requires_telegram_secret_without_exposing_value(monkeypatch):
     # Act / Assert
     with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN"):
         Config.from_env()
+
+
+def test_config_defaults_to_higher_quality_gemini_model(monkeypatch):
+    # Arrange
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123456")
+    monkeypatch.delenv("TRANSLATION_MODEL", raising=False)
+
+    # Act
+    config = Config.from_env()
+
+    # Assert
+    assert config.translation_model == "gemini-2.5-pro"
 
 
 def test_next_daily_run_uses_asia_taipei_eight_am():

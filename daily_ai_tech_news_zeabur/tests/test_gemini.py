@@ -45,7 +45,7 @@ def test_gemini_news_enricher_requests_traditional_chinese_title_and_article_key
             }
         )
 
-    enricher = GeminiNewsEnricher(api_key="test-key", model="gemini-2.5-flash-lite", urlopen=fake_urlopen)
+    enricher = GeminiNewsEnricher(api_key="test-key", model="gemini-2.5-pro", urlopen=fake_urlopen)
     item = NewsItem(
         title="OpenAI releases new agent model",
         link="https://example.com/ai",
@@ -60,7 +60,7 @@ def test_gemini_news_enricher_requests_traditional_chinese_title_and_article_key
     # Assert
     assert entry.title == "OpenAI 發表新的代理模型"
     assert entry.key_point == "新模型主打工具使用與低延遲，瞄準企業工作流程導入。"
-    assert "gemini-2.5-flash-lite:generateContent" in captured["url"]
+    assert "gemini-2.5-pro:generateContent" in captured["url"]
     prompt = captured["body"]["contents"][0]["parts"][0]["text"]
     assert "繁體中文" in prompt
     assert "文章本身的實際重點" in prompt
@@ -73,9 +73,45 @@ def test_gemini_news_enricher_rejects_invalid_model_response():
     def fake_urlopen(request, timeout):
         return FakeResponse({"candidates": [{"content": {"parts": [{"text": "not json"}]}}]})
 
-    enricher = GeminiNewsEnricher(api_key="test-key", model="gemini-2.5-flash-lite", urlopen=fake_urlopen)
+    enricher = GeminiNewsEnricher(api_key="test-key", model="gemini-2.5-pro", urlopen=fake_urlopen)
     item = NewsItem(title="Title", link="https://example.com", source="Source", published_at=None, summary="Summary")
 
     # Act / Assert
     with pytest.raises(GeminiError):
         enricher.enrich_item(item)
+
+
+def test_gemini_news_enricher_accepts_json_wrapped_in_markdown_and_extra_text():
+    # Arrange
+    def fake_urlopen(request, timeout):
+        return FakeResponse(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": "以下是 JSON：\n```json\n{\"title\":\"Anthropic 推出 Claude 新功能\",\"key_point\":\"新功能聚焦企業工作流程，強化模型在工具使用與協作場景的表現。\"}\n```"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+
+    enricher = GeminiNewsEnricher(api_key="test-key", model="gemini-2.5-pro", urlopen=fake_urlopen)
+    item = NewsItem(
+        title="Anthropic rolls out Claude update",
+        link="https://example.com/claude",
+        source="AIWire",
+        published_at=None,
+        summary="The update focuses on enterprise workflows and tool use.",
+    )
+
+    # Act
+    entry = enricher.enrich_item(item)
+
+    # Assert
+    assert entry.title == "Anthropic 推出 Claude 新功能"
+    assert entry.key_point == "新功能聚焦企業工作流程，強化模型在工具使用與協作場景的表現。"
