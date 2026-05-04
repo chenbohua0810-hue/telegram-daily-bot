@@ -6,7 +6,7 @@ import time
 from zoneinfo import ZoneInfo
 
 from .config import Config, ConfigError
-from .digest import build_digest_message, enrich_news_items, fetch_news_items, filter_recent_items, pick_top_items
+from .digest import build_digest_message, enrich_news_items, fetch_news_items, filter_ai_items, filter_recent_items, pick_top_items
 from .gemini import GeminiNewsEnricher
 from .scheduler import next_daily_run, seconds_until
 from .telegram import send_telegram_message
@@ -16,7 +16,9 @@ def run_once(config: Config) -> None:
     print("INFO fetching public technology news feeds", flush=True)
     items = fetch_news_items(config.rss_urls)
     recent_items = filter_recent_items(items, now=datetime.now(timezone.utc), hours=24)
-    selected = pick_top_items(recent_items, limit=config.item_limit)
+    ai_items = filter_ai_items(recent_items)
+    print(f"INFO kept {len(ai_items)} AI-related items from {len(recent_items)} recent items", flush=True)
+    selected = pick_top_items(ai_items, limit=config.item_limit)
     enricher = None
     if config.translate_titles and config.gemini_api_key:
         print(f"INFO enriching titles and article key points with {config.translation_model}", flush=True)

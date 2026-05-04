@@ -124,7 +124,17 @@ def pick_top_items(items: list[NewsItem], *, limit: int = 5) -> list[NewsItem]:
         seen_links.add(normalized_link)
         deduped.append(item)
 
-    return sorted(deduped, key=_score_item, reverse=True)[:limit]
+    filtered = [item for item in deduped if is_ai_related(item)]
+    return sorted(filtered, key=_score_item, reverse=True)[:limit]
+
+
+def filter_ai_items(items: list[NewsItem]) -> list[NewsItem]:
+    return [item for item in items if is_ai_related(item)]
+
+
+def is_ai_related(item: NewsItem) -> bool:
+    text = f"{item.title} {item.summary}".lower()
+    return any(_keyword_matches(keyword, text) for keyword in AI_KEYWORDS)
 
 
 def enrich_news_items(items: list[NewsItem], *, enricher: object | None = None) -> list[DigestEntry]:
@@ -141,10 +151,10 @@ def enrich_news_items(items: list[NewsItem], *, enricher: object | None = None) 
 
 
 def build_digest_message(entries: list[DigestEntry], *, today: date) -> str:
-    lines = [f"今日 AI / 科技新聞重點（{today.isoformat()}）", ""]
+    lines = [f"今日 AI 新聞重點（{today.isoformat()}）", ""]
     if not entries:
         lines.extend([
-            "今天沒有從公開來源取得足夠可靠的 AI / 科技新聞。",
+            "今天沒有從公開來源取得足夠可靠的 AI 新聞。",
             "建議稍後再檢查公開 RSS 或新聞來源。",
         ])
         return "\n".join(lines)
@@ -170,7 +180,7 @@ def build_digest_message(entries: list[DigestEntry], *, today: date) -> str:
 
 def _score_item(item: NewsItem) -> tuple[int, float]:
     text = f"{item.title} {item.summary}".lower()
-    ai_score = sum(1 for keyword in AI_KEYWORDS if keyword in text)
+    ai_score = sum(1 for keyword in AI_KEYWORDS if _keyword_matches(keyword, text))
     tech_score = sum(1 for keyword in TECH_KEYWORDS if keyword in text)
     published_ts = item.published_at.timestamp() if item.published_at else 0.0
     return (ai_score * 100 + tech_score * 10, published_ts)
@@ -179,7 +189,7 @@ def _score_item(item: NewsItem) -> tuple[int, float]:
 def _tags_for(item: NewsItem) -> list[str]:
     text = f"{item.title} {item.summary}".lower()
     tags: list[str] = []
-    if any(keyword in text for keyword in AI_KEYWORDS):
+    if any(_keyword_matches(keyword, text) for keyword in AI_KEYWORDS):
         tags.append("[AI]")
     if any(keyword in text for keyword in ("nvidia", "gpu", "chip", "semiconductor")):
         tags.append("[晶片]")
@@ -203,6 +213,16 @@ def _article_key_point_for(item: NewsItem) -> str:
             cleaned = cleaned[:87].rstrip() + "…"
         return cleaned
     return "公開來源沒有提供足夠摘要；請以標題判斷此新聞與今日科技動態的關聯。"
+
+
+def _keyword_matches(keyword: str, text: str) -> bool:
+    if keyword == "ai":
+        return re.search(r"(?<![a-z0-9])ai(?![a-z0-9])", text) is not None
+    if keyword == "agent":
+        return re.search(r"(?<![a-z0-9])agents?(?![a-z0-9])", text) is not None
+    if keyword == "gpu":
+        return re.search(r"(?<![a-z0-9])gpus?(?![a-z0-9])", text) is not None
+    return keyword in text
 
 
 def _fit_telegram_limit(message: str, *, limit: int = 3900) -> str:

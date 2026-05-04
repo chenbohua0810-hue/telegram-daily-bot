@@ -52,7 +52,7 @@ class Config:
             item_limit=_int_env("ITEM_LIMIT", 5, minimum=1, maximum=10),
             run_once=os.getenv("RUN_ONCE", "").lower() in {"1", "true", "yes"},
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
-            translation_model=os.getenv("TRANSLATION_MODEL", "gemini-2.5-flash-lite").strip() or "gemini-2.5-flash-lite",
+            translation_model=os.getenv("TRANSLATION_MODEL", "gemini-2.5-pro").strip() or "gemini-2.5-pro",
             translate_titles=os.getenv("TRANSLATE_TITLES", "true").lower() not in {"0", "false", "no"},
         )
 

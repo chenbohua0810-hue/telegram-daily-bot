@@ -16,8 +16,8 @@ class GeminiError(RuntimeError):
 @dataclass(frozen=True)
 class GeminiNewsEnricher:
     api_key: str
-    model: str = "gemini-2.5-flash-lite"
-    timeout_seconds: int = 20
+    model: str = "gemini-2.5-pro"
+    timeout_seconds: int = 30
     urlopen: object = urllib.request.urlopen
 
     def enrich_item(self, item: NewsItem) -> DigestEntry:
@@ -29,8 +29,8 @@ class GeminiNewsEnricher:
                 }
             ],
             "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 220,
+                "temperature": 0.0,
+                "maxOutputTokens": 320,
                 "responseMimeType": "application/json",
             },
         }
@@ -49,7 +49,7 @@ class GeminiNewsEnricher:
         try:
             response_payload = json.loads(raw)
             text = response_payload["candidates"][0]["content"]["parts"][0]["text"]
-            entry_payload = json.loads(_strip_json_fence(text))
+            entry_payload = json.loads(_extract_json_object(text))
             title = _clean_output(entry_payload["title"], limit=80)
             key_point = _clean_output(entry_payload["key_point"], limit=120)
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -84,6 +84,25 @@ def _build_prompt(item: NewsItem) -> str:
 來源：{item.source}
 摘要：{summary}
 """
+
+
+def _extract_json_object(value: str) -> str:
+    text = _strip_json_fence(value)
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No JSON object found in Gemini response")
+    return text[start : end + 1].strip()
 
 
 def _strip_json_fence(value: str) -> str:

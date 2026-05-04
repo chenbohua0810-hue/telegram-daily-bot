@@ -5,9 +5,8 @@
 ## 功能
 
 - 每天 08:00 Asia/Taipei 執行。
-- 從公開 RSS / 公開新聞來源抓取科技新聞。
-- AI 優先排序，不足時補半導體、雲端、資安、開發者工具、新創等科技新聞。
-- 過濾過去 24 小時內的新聞；若 RSS 來源沒有提供時間戳，會保留但依 AI/科技相關性排序。
+- 只收 AI 相關新聞；不足 5 則時寧可少發，也不補一般科技新聞。
+- 過濾過去 24 小時內的新聞；若 RSS 來源沒有提供時間戳，會保留但依 AI 相關性排序。
 - 發送 5 則「繁體中文標題 + 文章實際重點」到 Telegram。
 - 可選用 Gemini API 將英文標題翻成繁體中文，並依標題/摘要生成文章本身的重點。
 - 不需要本機常駐。
@@ -42,7 +41,7 @@ SEND_MINUTE=0
 ITEM_LIMIT=5
 GEMINI_API_KEY=Google AI Studio Gemini API key，用於翻譯標題與生成文章實際重點
 TRANSLATE_TITLES=true
-TRANSLATION_MODEL=gemini-2.5-flash-lite
+TRANSLATION_MODEL=gemini-2.5-pro
 ```
 
 `TELEGRAM_CHAT_ID` 請填你的 Telegram chat_id。

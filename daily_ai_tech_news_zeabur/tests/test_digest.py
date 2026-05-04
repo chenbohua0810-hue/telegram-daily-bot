@@ -37,8 +37,8 @@ def test_pick_top_items_prioritizes_ai_and_deduplicates_links():
 
     # Assert
     assert [item.link for item in selected] == [
-        "https://example.com/ai",
         "https://example.com/chip",
+        "https://example.com/ai",
     ]
 
 
