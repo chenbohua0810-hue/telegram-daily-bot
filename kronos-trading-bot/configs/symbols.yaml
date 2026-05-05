@@ -1,0 +1,7 @@
+symbols:
+  - BTC/USDT
+  - ETH/USDT
+interval: 1h
+exchange_symbol_map:
+  BTC/USDT: BTCUSDT
+  ETH/USDT: ETHUSDT

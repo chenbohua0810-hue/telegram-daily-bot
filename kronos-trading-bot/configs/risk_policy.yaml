@@ -1,0 +1,12 @@
+mode: paper
+starting_balance_usdt: 10000
+max_single_position_pct: 0.10
+max_daily_loss_pct: 0.03
+max_open_positions: 2
+allow_live_trading: false
+require_stop_loss: true
+allowed_symbols:
+  - BTC/USDT
+  - ETH/USDT
+pyramiding_enabled: false
+model_stale_after_minutes: 90

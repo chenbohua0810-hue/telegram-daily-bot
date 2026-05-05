@@ -1,0 +1,16 @@
+agents:
+  data_agent:
+    can_trade: false
+  forecast_agent:
+    can_trade: false
+  strategy_agent:
+    can_trade: false
+  risk_agent:
+    can_trade: false
+  paper_execution_agent:
+    can_trade: paper_only
+  monitor_agent:
+    can_trade: false
+  live_execution_agent:
+    can_trade: false
+    status: disabled

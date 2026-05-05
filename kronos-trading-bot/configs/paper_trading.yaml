@@ -1,0 +1,6 @@
+starting_cash_usdt: 10000
+taker_fee_rate: 0.001
+slippage_bps: 10
+partial_fills_enabled: false
+persist_state: true
+journal_path: reports/trade_journal.csv

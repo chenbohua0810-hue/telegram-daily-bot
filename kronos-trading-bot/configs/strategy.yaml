@@ -1,0 +1,6 @@
+entry_threshold: 0.02
+exit_threshold: -0.01
+stop_loss_pct: 0.02
+take_profit_pct: 0.04
+confidence_floor: 0.0
+long_only: true

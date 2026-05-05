@@ -1,0 +1,6 @@
+execution_mode: paper
+exchange: binance_spot
+interval: 1h
+data_dir: data
+report_dir: reports
+require_risk_approval: true

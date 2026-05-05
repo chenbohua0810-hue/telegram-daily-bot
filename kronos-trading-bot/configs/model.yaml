@@ -1,0 +1,9 @@
+default_model: Kronos-small
+fast_model: Kronos-mini
+validation_model: Kronos-base
+tokenizer: Kronos-Tokenizer-base
+lookback: 400
+pred_len: 6
+temperature: 1.0
+top_p: 0.9
+sample_count: 1
