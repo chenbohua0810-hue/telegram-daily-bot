@@ -18,3 +18,14 @@ class DataQualityReport:
     errors: list[str]
     candle_count: int
     latest_timestamp: datetime | None
+
+
+@dataclass(frozen=True)
+class Signal:
+    symbol: str
+    action: SignalAction
+    predicted_return: float
+    confidence_score: float
+    model_used: str
+    reason_code: str
+    timestamp: datetime | None = None
