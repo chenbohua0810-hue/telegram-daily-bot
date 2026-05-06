@@ -11,6 +11,11 @@ class SignalAction(StrEnum):
     SELL_TO_CLOSE = "SELL_TO_CLOSE"
 
 
+class TradeSide(StrEnum):
+    BUY = "BUY"
+    SELL = "SELL"
+
+
 @dataclass(frozen=True)
 class DataQualityReport:
     symbol: str | None
@@ -36,3 +41,21 @@ class RiskDecision:
     approved: bool
     reason_code: str
     adjusted_notional_usdt: float | None = None
+
+
+@dataclass(frozen=True)
+class PaperPosition:
+    symbol: str
+    quantity: float
+    average_entry_price: float
+
+
+@dataclass(frozen=True)
+class PaperFill:
+    symbol: str
+    side: TradeSide
+    quantity: float
+    fill_price: float
+    notional_usdt: float
+    fee_usdt: float
+    realized_pnl_usdt: float = 0.0
