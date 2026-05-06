@@ -29,3 +29,10 @@ class Signal:
     model_used: str
     reason_code: str
     timestamp: datetime | None = None
+
+
+@dataclass(frozen=True)
+class RiskDecision:
+    approved: bool
+    reason_code: str
+    adjusted_notional_usdt: float | None = None
